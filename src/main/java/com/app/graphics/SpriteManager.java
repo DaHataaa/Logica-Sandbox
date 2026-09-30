@@ -1,8 +1,8 @@
 package com.app.graphics;
 
-import com.app.Config;
 import com.app.core.Direction;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -12,6 +12,8 @@ public class SpriteManager {
     private TexturepackManager texturepackManager;
     private int[] fallbackSprite;
     private String currentTexturepack;
+
+    private final Map<String, int[]> rotatedCache = new HashMap<>();
 
     private SpriteManager() {
         this.texturepackManager = new TexturepackManager();
@@ -25,6 +27,7 @@ public class SpriteManager {
         Map<String, Sprite> originalSprites = SpriteLoader.loadAllSprites(texpack);
         this.cache = new SpriteCache(originalSprites, texturepackManager.getColors());
         this.currentTexturepack = texpack;
+        this.rotatedCache.clear();
         System.out.println("Sprites reloaded from texturepack: " + texpack);
     }
 
@@ -63,15 +66,30 @@ public class SpriteManager {
     }
 
     public int[] getSpriteWithDirection(String name, int targetSize, Direction direction, boolean signalOn) {
+        if (direction == Direction.UP || targetSize <= 0) {
+            return getSprite(name, targetSize, signalOn);
+        }
+        if (name == null) return fallbackSprite;
+
+        String key = name + "|" + targetSize + "|" + direction + "|" + signalOn;
+        int[] cached = rotatedCache.get(key);
+        if (cached != null) return cached;
+
         int[] original = getSprite(name, targetSize, signalOn);
         if (original == null) return fallbackSprite;
-        if (direction == Direction.UP) return original;
-        if (targetSize <= 0) return original;
-        return rotateSprite(original, targetSize, direction);
+
+        int[] rotated = rotateSprite(original, targetSize, direction);
+        rotatedCache.put(key, rotated);
+        return rotated;
     }
 
     public int[] getRotatedSprite(String name, int targetSize, Direction direction) {
         return getSpriteWithDirection(name, targetSize, direction, false);
+    }
+
+    /** Вызывать при смене размера клетки (зум), чтобы кэш не пух. */
+    public void trimRotatedCache() {
+        rotatedCache.clear();
     }
 
     private int[] rotateSprite(int[] sprite, int size, Direction direction) {

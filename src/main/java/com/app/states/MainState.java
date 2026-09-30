@@ -196,6 +196,7 @@ public class MainState implements State {
                 } else {
                     camera.zoomAt(0.9, zx, zy);
                 }
+                SpriteManager.getInstance().trimRotatedCache();
                 event.consume();
                 return;
             }
@@ -909,6 +910,7 @@ public class MainState implements State {
         double deltaY = event.getDeltaY();
         double factor = deltaY > 0 ? 1.1 : 0.9;
         camera.zoom(factor, event.getSceneX(), event.getSceneY());
+        SpriteManager.getInstance().trimRotatedCache();
         renderer.render();
     }
 
