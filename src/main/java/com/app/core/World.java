@@ -68,30 +68,30 @@ public class World {
 
         int underscoreIndex = blockType.indexOf('_');
 
-        // Если нет подчёркивания, проверяем, не power ли это
+        // Если нет подчёркивания — обрабатываем power и peg (старый формат)
         if (underscoreIndex == -1) {
             if (blockType.equals("power")) {
                 blockTypes[layer][y][x] = TYPE_POWER;
-                blockDirs[layer][y][x] = 0;  // не важно для power
+                blockDirs[layer][y][x] = 0;
                 blockStates[layer][y][x] = true;
                 signals[layer][y][x] = true;
                 return;
             }
             if (blockType.equals("peg")) {
+                // Старый формат без направления — считаем UP
                 blockTypes[layer][y][x] = TYPE_PEG;
-                blockDirs[layer][y][x] = 0;  // не важно для power
-                return;
-            }
-            else {
-                blockTypes[layer][y][x] = TYPE_EMPTY;
                 blockDirs[layer][y][x] = 0;
                 blockStates[layer][y][x] = false;
                 signals[layer][y][x] = false;
                 return;
             }
+            blockTypes[layer][y][x] = TYPE_EMPTY;
+            blockDirs[layer][y][x] = 0;
+            blockStates[layer][y][x] = false;
+            signals[layer][y][x] = false;
+            return;
         }
 
-        // Проверка на минимальную длину после подчёркивания
         if (underscoreIndex + 2 >= blockType.length()) {
             blockTypes[layer][y][x] = TYPE_EMPTY;
             blockDirs[layer][y][x] = 0;
@@ -104,7 +104,6 @@ public class World {
         char state = blockType.charAt(underscoreIndex + 1);
         char dir = blockType.charAt(underscoreIndex + 2);
 
-        // Тип блока
         int type = switch (blockName) {
             case "arrow" -> TYPE_ARROW;
             case "and" -> TYPE_AND;
@@ -126,19 +125,11 @@ public class World {
             default -> 0;
         };
 
-        // Power блок всегда активен, независимо от переданного состояния
-        boolean blockState;
-        if (type == TYPE_POWER) {
-            blockState = true;
-        } else {
-            blockState = (state == 't');
-        }
+        boolean blockState = (type == TYPE_POWER) || (state == 't');
 
         blockTypes[layer][y][x] = type;
         blockDirs[layer][y][x] = dirIndex;
         blockStates[layer][y][x] = blockState;
-
-        // ВАЖНО: сигнал должен соответствовать состоянию блока
         signals[layer][y][x] = blockState;
     }
 
