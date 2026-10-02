@@ -137,7 +137,7 @@ public class MainState implements State {
             if (root.getScene() != null) {
                 javafx.stage.Stage stage = (javafx.stage.Stage) root.getScene().getWindow();
                 if (stage != null && currentMapName != null) {
-                    stage.setTitle("Logic 2 - " + currentMapName);
+                    stage.setTitle("Logica-Sandbox - " + currentMapName);
                 }
                 renderer.getCanvas().requestFocus();
             }

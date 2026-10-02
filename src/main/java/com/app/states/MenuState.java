@@ -44,7 +44,7 @@ public class MenuState implements State {
         centerPanel.setMaxWidth(800);
 
         // Заголовок
-        Text title = new Text("LOGIC 2");
+        Text title = new Text("Logica-Sandbox");
         title.getStyleClass().add("menu-title");
         title.setStyle("-fx-font-size: 64px;");
         title.setFill(Color.web(colors.getGrid()));

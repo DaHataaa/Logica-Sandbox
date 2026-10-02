@@ -60,7 +60,7 @@ public class Main extends Application {
         }.start();
 
         primaryStage.setScene(scene);
-        primaryStage.setTitle("Logic 2");
+        primaryStage.setTitle("Logica-Sandbox");
         primaryStage.setOnCloseRequest(e -> {
             Config.getInstance().save();
             System.exit(0);
