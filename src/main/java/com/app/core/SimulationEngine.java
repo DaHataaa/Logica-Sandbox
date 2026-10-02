@@ -210,41 +210,10 @@ public class SimulationEngine {
                 for (int x = 0; x < size; x++) {
                     if (world.blockTypes[layer][y][x] != World.TYPE_PEG) continue;
 
-                    int dirIndex = world.blockDirs[layer][y][x];
 
-                    // Клетка сзади (откуда PEG должен принимать сигнал)
-                    int backIndex = (dirIndex + 2) % 4;
-                    int srcX = x + DX[backIndex];
-                    int srcY = y + DY[backIndex];
-
-                    if (srcX < 0 || srcX >= size || srcY < 0 || srcY >= size) continue;
-
-                    // Проверяем: сигнал пришёл в PEG именно с направления backIndex,
-                    // т.е. блок сзади активен и шлёт сигнал в нашу клетку.
                     boolean hasHorizontalInput = false;
-                    if (world.getSignal(layer, srcX, srcY)) {
-                        // Блок сзади активен — проверим, что он действительно
-                        // шлёт сигнал в нашу клетку (направление блока сзади
-                        // должно указывать на PEG).
-                        int srcType = world.blockTypes[layer][srcY][srcX];
-                        int srcDir = world.blockDirs[layer][srcY][srcX];
-                        int srcNx = srcX + DX[srcDir];
-                        int srcNy = srcY + DY[srcDir];
-                        // BRIDGE бьёт на 2 клетки
-                        boolean bridgeHits = (srcType == World.TYPE_BRIDGE)
-                                && (srcX + DX[srcDir] * 2 == x)
-                                && (srcY + DY[srcDir] * 2 == y);
-                        boolean normalHits = (srcNx == x) && (srcNy == y);
-                        // POWER шлёт во все стороны
-                        boolean powerHits = (srcType == World.TYPE_POWER);
 
-                        if (normalHits || bridgeHits || powerHits) {
-                            hasHorizontalInput = true;
-                        }
-                    }
 
-                    // Резервный вариант: сигнал уже посчитан в newSignals этой клетки
-                    // (например, от POWER в этом же такте)
                     if (!hasHorizontalInput && newSignals[layer][y][x] >= 1) {
                         hasHorizontalInput = true;
                     }
@@ -253,7 +222,6 @@ public class SimulationEngine {
 
                     pegHorizontalInput[layer][y][x] = true;
 
-                    // Передаём ВЕРТИКАЛЬНО только PEG'ам других слоёв
                     for (int otherLayer = 0; otherLayer < layers; otherLayer++) {
                         if (otherLayer == layer) continue;
                         if (world.blockTypes[otherLayer][y][x] == World.TYPE_PEG) {
@@ -277,27 +245,9 @@ public class SimulationEngine {
                     if (world.blockTypes[layer][y][x] != World.TYPE_PEG) continue;
 
                     boolean hasVertical = verticalInput[layer][y][x];
-                    boolean hasHorizontal = pegHorizontalInput[layer][y][x];
 
-                    if (!hasVertical && !hasHorizontal) continue;
-
-                    // Ставим сигнал самой PEG (для GETTER'а на этой же клетке)
+                    if (!hasVertical) continue;
                     newSignals[layer][y][x] = 1;
-
-                    // Если есть ВЕРТИКАЛЬНЫЙ вход — передаём вперёд по направлению
-                    if (hasVertical) {
-                        int dirIndex = world.blockDirs[layer][y][x];
-                        int outX = x + DX[dirIndex];
-                        int outY = y + DY[dirIndex];
-
-                        if (outX >= 0 && outX < size && outY >= 0 && outY < size) {
-                            // Не передаём другим PEG'ам «вперёд» — PEG принимает
-                            // только сзади (backIndex). Иначе получится петля.
-                            if (world.blockTypes[layer][outY][outX] != World.TYPE_PEG) {
-                                newSignals[layer][outY][outX] += 1;
-                            }
-                        }
-                    }
                 }
             }
         }
