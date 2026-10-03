@@ -79,6 +79,9 @@ public class SpriteManager {
         if (original == null) return fallbackSprite;
 
         int[] rotated = rotateSprite(original, targetSize, direction);
+        if (rotatedCache.size() >= 256) {
+            rotatedCache.clear();
+        }
         rotatedCache.put(key, rotated);
         return rotated;
     }

@@ -36,11 +36,15 @@ public class MapManager {
                 for (int y = 0; y < size; y++) {
                     StringBuilder line = new StringBuilder();
                     for (int x = 0; x < size; x++) {
-                        String block = world.getBlock(layer, x, y);
-                        if (block == null || block.equals("0")) {
+                        int t = world.blockTypes[layer][y][x];
+                        if (t == World.TYPE_EMPTY) {
                             line.append("0");
+                        } else if (t == World.TYPE_POWER) {
+                            line.append("power");
                         } else {
-                            line.append(block);
+                            char s = world.blockStates[layer][y][x] ? 't' : 'f';
+                            char d = "urdl".charAt(world.blockDirs[layer][y][x] & 3);
+                            line.append(World.TYPE_NAMES[t]).append('_').append(s).append(d);
                         }
                         if (x < size - 1) line.append(" ");
                     }

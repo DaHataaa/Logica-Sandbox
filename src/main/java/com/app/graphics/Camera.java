@@ -19,12 +19,12 @@ public class Camera {
     private double targetZoom;
     private double velocityZoom = 0;
     private AnimationTimer inertiaTimer;
-    private static final double ZOOM_FRICTION = 0.90;
-    private static final double MIN_ZOOM_VELOCITY = 0.0005;
+    private static final double ZOOM_FRICTION = 0.7;
+    private static final double MIN_ZOOM_VELOCITY = 0.0003;
 
     // Сила импульса от одного шага зума
-    private static final double WHEEL_IMPULSE = 0.10;
-    private static final double BUTTON_IMPULSE = 0.10;
+    private static final double WHEEL_IMPULSE = 0.08;
+    private static final double BUTTON_IMPULSE = 0.08;
 
     // Точка зума
     private double lastMouseScreenX = 0;

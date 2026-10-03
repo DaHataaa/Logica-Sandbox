@@ -173,7 +173,7 @@ public class GridRenderer {
         int visibleCells = (endX - startX) * (endY - startY);
         boolean useSimplifiedRendering = cellScreenSize > 64 && visibleCells > 5000;
 
-        gc.setFill(Color.WHITE);
+        gc.setFill(bgColor);
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
 
         for (int y = startY; y < endY; y++) {
@@ -187,9 +187,10 @@ public class GridRenderer {
                 int ix = (int) Math.round(screenX);
                 int iy = (int) Math.round(screenY);
 
-                // 1. ФОН КЛЕТКИ — signalOn у активных, bg у остальных
-                gc.setFill(hasSignal ? signalOnColor : bgColor);
-                gc.fillRect(ix, iy, cellScreenSize, cellScreenSize);
+                if (hasSignal) {
+                    gc.setFill(signalOnColor);
+                    gc.fillRect(ix, iy, cellScreenSize, cellScreenSize);
+                }
 
                 // 2. СПРАЙТ ПОВЕРХ
                 if (typeId != World.TYPE_EMPTY) {
@@ -225,8 +226,8 @@ public class GridRenderer {
 
         gc.setStroke(gridColor);
 
-        if (cellScreenSize >= 8) {
-            gc.setLineWidth(1.6);
+        if (cellScreenSize >= 10) {
+            gc.setLineWidth(1.2);
             gc.beginPath();
             for (int x = startX; x <= endX; x++) {
                 double screenX = camera.worldToScreenX(x * baseCellSize);

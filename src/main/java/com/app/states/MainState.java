@@ -68,6 +68,9 @@ public class MainState implements State {
     // Защита от двойного срабатывания F
     private boolean fHandledOnPress = false;
 
+    // ===== Флаг "нужен рендер" =====
+    private boolean needsRender = true;
+
     // Для расчёта deltaSeconds в update()
     private long lastFrameNanos = 0;
 
@@ -105,7 +108,8 @@ public class MainState implements State {
         this.powerColor = colors.getPower();
         this.gridColor = colors.getGrid();
 
-        simulationEngine.setOnTickComplete(() -> renderer.render());
+        // Рендер выполняется централизованно в update() по флагу needsRender
+        simulationEngine.setOnTickComplete(null);
 
         this.root = new BorderPane();
         root.setCenter(renderer.getCanvas());
@@ -146,6 +150,8 @@ public class MainState implements State {
         simulationEngine.start();
         initDeleteTimer();
     }
+
+    private void requestRender() { needsRender = true; }
 
     // ===== Фильтр клавиатуры =====
     private void installKeyboardFilter(Scene scene) {
@@ -197,6 +203,7 @@ public class MainState implements State {
                     camera.zoomAt(0.9, zx, zy);
                 }
                 SpriteManager.getInstance().trimRotatedCache();
+                requestRender();
                 event.consume();
                 return;
             }
@@ -238,7 +245,7 @@ public class MainState implements State {
         if (keyboardCursorX >= world.getSize()) keyboardCursorX = world.getSize() - 1;
         if (keyboardCursorY >= world.getSize()) keyboardCursorY = world.getSize() - 1;
 
-        renderer.render();
+        requestRender();
     }
 
     private void handlePlaceAction() {
@@ -246,7 +253,8 @@ public class MainState implements State {
 
         if (previewMode && selection.hasSelection()) {
             selection.paste(world, world.getCurrentLayer(), keyboardCursorX, keyboardCursorY);
-            renderer.render();
+            simulationEngine.markWorldChanged();
+            requestRender();
             System.out.println("Paste (F) at (" + keyboardCursorX + ", " + keyboardCursorY + ")");
         } else if (!selecting) {
             placeBlockAtCell(keyboardCursorX, keyboardCursorY);
@@ -293,9 +301,10 @@ public class MainState implements State {
         }
 
         world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
+        simulationEngine.markWorldChanged();
         System.out.println("Placed (kb): " + blockStr + " at (" + cellX + ", " + cellY
                 + ") on layer " + world.getCurrentLayer());
-        renderer.render();
+        requestRender();
     }
 
     private void removeBlockAtCell(int cellX, int cellY) {
@@ -303,8 +312,9 @@ public class MainState implements State {
         String block = world.getBlock(world.getCurrentLayer(), cellX, cellY);
         if (block != null && !block.equals("0")) {
             world.removeBlock(world.getCurrentLayer(), cellX, cellY);
+            simulationEngine.markWorldChanged();
             System.out.println("Removed (kb) at (" + cellX + ", " + cellY + ")");
-            renderer.render();
+            requestRender();
         }
     }
 
@@ -355,6 +365,7 @@ public class MainState implements State {
                 palette.updateSimulationStatus(false);
             }
         }
+        javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
     }
 
     private void onBlockSelected() {
@@ -400,8 +411,9 @@ public class MainState implements State {
             }
 
             world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
+            simulationEngine.markWorldChanged();
             System.out.println("Placed: " + blockStr + " at (" + cellX + ", " + cellY + ") on layer " + world.getCurrentLayer());
-            renderer.render();
+            requestRender();
         }
     }
 
@@ -425,8 +437,9 @@ public class MainState implements State {
             String block = world.getBlock(world.getCurrentLayer(), cellX, cellY);
             if (block != null && !block.equals("0")) {
                 world.removeBlock(world.getCurrentLayer(), cellX, cellY);
+                simulationEngine.markWorldChanged();
                 System.out.println("Removed at (" + cellX + ", " + cellY + ")");
-                renderer.render();
+                requestRender();
             }
         }
     }
@@ -516,7 +529,7 @@ public class MainState implements State {
         }
 
         palette.updateLayer(world.getCurrentLayer());
-        renderer.render();
+        requestRender();
         javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
     }
 
@@ -543,7 +556,7 @@ public class MainState implements State {
         }
         lastFrameNanos = now;
 
-        // ===== Слежение камеры =====
+        // ===== Слежение камеры ТОЛЬКО за клавиатурным курсором =====
         if (keyboardCursorActive) {
             double cursorScreenX = camera.worldToScreenX(
                     (keyboardCursorX + 0.5) * camera.getBaseCellSize()
@@ -558,32 +571,18 @@ public class MainState implements State {
                     CameraFollower.DEAD_ZONE_KEYBOARD,
                     CameraFollower.SMOOTHING_KEYBOARD
             );
+            // камера могла сдвинуться — нужен рендер
+            requestRender();
         } else {
-            boolean mouseInsideCanvas = false;
-            double mouseCanvasX = 0;
-            double mouseCanvasY = 0;
-
-            if (!panning && !isMouseOverPalette(lastSceneMouseX, lastSceneMouseY)) {
-                Point2D canvasCoords = getCanvasCoordinates(lastSceneMouseX, lastSceneMouseY);
-                mouseCanvasX = canvasCoords.getX();
-                mouseCanvasY = canvasCoords.getY();
-
-                if (mouseCanvasX >= 0 && mouseCanvasX <= renderer.getCanvas().getWidth() &&
-                        mouseCanvasY >= 0 && mouseCanvasY <= renderer.getCanvas().getHeight()) {
-                    mouseInsideCanvas = true;
-                }
-            }
-
-            cameraFollower.update(
-                    deltaSeconds,
-                    mouseCanvasX, mouseCanvasY,
-                    mouseInsideCanvas,
-                    CameraFollower.DEAD_ZONE_MOUSE,
-                    CameraFollower.SMOOTHING_MOUSE
-            );
+            cameraFollower.reset();
         }
 
-        renderer.render();
+        // ===== Рендер только когда нужно =====
+        boolean simRunning = simulationEngine.isRunning();
+        if (needsRender || simRunning) {
+            renderer.render();
+            needsRender = false;
+        }
 
         GraphicsContext gc = renderer.getCanvas().getGraphicsContext2D();
 
@@ -656,10 +655,29 @@ public class MainState implements State {
             gc.setLineWidth(3);
             gc.strokeRect(screenX + 1, screenY + 1, cellSize - 2, cellSize - 2);
         }
+
+        palette.setActualTps(simulationEngine.getActualTps());
     }
 
     @Override
     public void handleKeyPressed(KeyEvent event) {
+        // Ctrl+S — только сохранение, не трогаем направления
+        if (event.isControlDown()) {
+            if (event.isShiftDown()) {
+                if (event.getCode() == KeyCode.S) {
+                    saveAsMap();
+                    event.consume();
+                    return;
+                }
+            } else {
+                if (event.getCode() == KeyCode.S) {
+                    saveMap();
+                    event.consume();
+                    return;
+                }
+            }
+        }
+
         switch (event.getCode()) {
             case ESCAPE:
                 nextState = new MenuState();
@@ -699,13 +717,13 @@ public class MainState implements State {
             case T:
                 world.nextLayer();
                 palette.updateLayer(world.getCurrentLayer());
-                renderer.render();
+                requestRender();
                 break;
 
             case G:
                 world.previousLayer();
                 palette.updateLayer(world.getCurrentLayer());
-                renderer.render();
+                requestRender();
                 break;
 
             case R:
@@ -715,7 +733,8 @@ public class MainState implements State {
                     } else if (selection.hasSelection()) {
                         selection.deleteSelected(world, world.getCurrentLayer());
                         selection.clear();
-                        renderer.render();
+                        simulationEngine.markWorldChanged();
+                        requestRender();
                         System.out.println("Deleted selected area");
                     } else {
                         deleteMode = true;
@@ -733,7 +752,7 @@ public class MainState implements State {
                 if (selection.hasSelection()) {
                     selection.clear();
                     previewMode = false;
-                    renderer.render();
+                    requestRender();
                 } else {
                     palette.setDirection(Direction.RIGHT);
                 }
@@ -742,8 +761,9 @@ public class MainState implements State {
             case X:
                 if (selection.hasSelection() && !previewMode && !selecting) {
                     selection.cut(world, world.getCurrentLayer());
+                    simulationEngine.markWorldChanged();
                     previewMode = true;
-                    renderer.render();
+                    requestRender();
                     System.out.println("Cut: selection removed, preview mode activated");
                 }
                 break;
@@ -751,7 +771,7 @@ public class MainState implements State {
             case C:
                 if (selection.hasSelection() && !previewMode && !selecting) {
                     previewMode = true;
-                    renderer.render();
+                    requestRender();
                     System.out.println("Copy: preview mode activated");
                 }
                 break;
@@ -769,7 +789,8 @@ public class MainState implements State {
                         py = (int) Math.floor(worldY / camera.getBaseCellSize());
                     }
                     selection.paste(world, world.getCurrentLayer(), px, py);
-                    renderer.render();
+                    simulationEngine.markWorldChanged();
+                    requestRender();
                     System.out.println("Paste done at (" + px + ", " + py + ")");
                 }
                 break;
@@ -785,18 +806,6 @@ public class MainState implements State {
             case DIGIT9: palette.setSelectedIndex(8); break;
             case DIGIT0: palette.setSelectedIndex(9); break;
             default: break;
-        }
-
-        if (event.isControlDown()) {
-            if (event.isShiftDown()) {
-                if (event.getCode() == KeyCode.S) {
-                    saveAsMap();
-                }
-            } else {
-                if (event.getCode() == KeyCode.S) {
-                    saveMap();
-                }
-            }
         }
     }
 
@@ -816,7 +825,7 @@ public class MainState implements State {
             }
             selection.updateSelection(endX, endY);
             selection.finishSelection(world);
-            renderer.render();
+            requestRender();
             System.out.println("Selection finished: size " + selection.getWidth() + "x" + selection.getHeight());
         }
 
@@ -836,7 +845,7 @@ public class MainState implements State {
         if (keyboardCursorActive) {
             keyboardCursorActive = false;
             cameraFollower.reset();
-            renderer.render();
+            requestRender();
         }
 
         boolean overPalette = isMouseOverPalette(event.getSceneX(), event.getSceneY());
@@ -851,7 +860,6 @@ public class MainState implements State {
         } else if (event.getButton() == MouseButton.PRIMARY) {
             if (!overPalette && !selecting && !previewMode && !deleteMode) {
                 placeBlock(event.getSceneX(), event.getSceneY());
-                renderer.render();
             }
         }
     }
@@ -877,18 +885,17 @@ public class MainState implements State {
             camera.moveScreen(dx, dy);
             lastMouseX = event.getSceneX();
             lastMouseY = event.getSceneY();
-            renderer.render();
+            requestRender();
         } else if (event.getButton() == MouseButton.PRIMARY && !overPalette && !selecting && !previewMode && !deleteMode) {
             placeBlock(event.getSceneX(), event.getSceneY());
-            renderer.render();
         }
 
         if (selecting) {
-            renderer.render();
+            requestRender();
         }
 
         if (previewMode) {
-            renderer.render();
+            requestRender();
         }
     }
 
@@ -897,8 +904,8 @@ public class MainState implements State {
         lastSceneMouseX = event.getSceneX();
         lastSceneMouseY = event.getSceneY();
 
-        if (previewMode) {
-            renderer.render();
+        if (previewMode || selecting || keyboardCursorActive) {
+            requestRender();
         }
     }
 
@@ -911,7 +918,7 @@ public class MainState implements State {
         double factor = deltaY > 0 ? 1.1 : 0.9;
         camera.zoom(factor, event.getSceneX(), event.getSceneY());
         SpriteManager.getInstance().trimRotatedCache();
-        renderer.render();
+        requestRender();
     }
 
     @Override

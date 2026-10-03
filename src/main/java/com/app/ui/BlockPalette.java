@@ -5,17 +5,21 @@ import com.app.core.BlockType;
 import com.app.core.Direction;
 import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
+import javafx.animation.PauseTransition;
+import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
-import javafx.scene.control.Slider;
+import javafx.scene.control.TextField;
 import javafx.scene.image.PixelWriter;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import javafx.scene.shape.Rectangle;
+import javafx.util.Duration;
 
 public class BlockPalette extends VBox {
     private final SpriteManager spriteManager;
@@ -33,14 +37,28 @@ public class BlockPalette extends VBox {
     private Text layerText;
     private Text simStatusText;
     private Rectangle simStatusDot;
-    private Slider speedSlider;
-    private Text speedValueText;
+
+    // ===== TPS ввод =====
+    private TextField speedField;
+    private Text actualTpsText;
+    private PauseTransition speedDebounce;
 
     private int currentLayer = 0;
     private int maxLayers = 5;
     private boolean isSimulationRunning = true;
     private int currentSpeed = 60;
-    private int[] availableSpeeds;
+
+    // Флаг, чтобы listener не срабатывал при программном setText
+    private boolean suppressSpeedListener = false;
+
+    private static final String FIELD_BASE_STYLE =
+            "-fx-font-family: 'Monospace';" +
+                    "-fx-font-size: 18px;" +
+                    "-fx-alignment: center;" +
+                    "-fx-background-radius: 5;" +
+                    "-fx-border-radius: 5;" +
+                    "-fx-border-width: 2;" +
+                    "-fx-padding: 4 6 4 6;";
 
     public BlockPalette() {
         super(10);
@@ -49,7 +67,6 @@ public class BlockPalette extends VBox {
         blockTypes = BlockType.values();
         icons = new Canvas[blockTypes.length];
         itemContainers = new HBox[blockTypes.length];
-        availableSpeeds = Config.getInstance().getAvailableSpeeds();
         currentSpeed = Config.getInstance().getSimulationSpeed();
 
         maxLayers = Config.getInstance().getLayers();
@@ -117,65 +134,120 @@ public class BlockPalette extends VBox {
         Rectangle topSeparator = new Rectangle(paletteWidth - 40, 2);
         topSeparator.setFill(Color.web(colors.getGrid()));
 
-        Text speedLabel = new Text("SPEED");
+        Text speedLabel = new Text("SIM. SPEED");
         speedLabel.setFill(Color.web(colors.getGrid()));
         speedLabel.setFont(Font.font("Monospace", 14));
 
-        java.util.List<String> speedLabels = new java.util.ArrayList<>();
-        for (int speed : availableSpeeds) {
-            speedLabels.add(String.valueOf(speed));
-        }
-        speedLabels.add("MAX");
+        speedField = new TextField(getSpeedString(currentSpeed));
+        speedField.setPrefWidth(paletteWidth - 30);
+        speedField.setMaxWidth(paletteWidth - 30);
+        // Обычное состояние — ОРАНЖЕВАЯ рамка
+        speedField.setStyle(fieldStyle(colors.getSignalOn()));
+        speedField.setFocusTraversable(true);
 
-        speedSlider = new Slider(0, speedLabels.size() - 1, getSpeedIndex(currentSpeed));
-        speedSlider.setShowTickLabels(true);
-        speedSlider.setShowTickMarks(true);
-        speedSlider.setMajorTickUnit(1);
-        speedSlider.setMinorTickCount(0);
-        speedSlider.setSnapToTicks(true);
-        speedSlider.setBlockIncrement(1);
-        speedSlider.setMaxWidth(paletteWidth - 30);
+        // Любой ввод — рамка становится ОБЫЧНОЙ (grid)
+        speedField.textProperty().addListener((obs, oldText, newText) -> {
+            if (suppressSpeedListener) return;
+            speedField.setStyle(fieldStyle(colors.getGrid()));
+        });
 
-        speedSlider.setLabelFormatter(new javafx.util.StringConverter<Double>() {
-            @Override
-            public String toString(Double object) {
-                int idx = object.intValue();
-                if (idx >= 0 && idx < speedLabels.size()) {
-                    return speedLabels.get(idx);
-                }
-                return "";
+        // Enter — применяем и возвращаем ОРАНЖЕВУЮ рамку
+        speedField.setOnAction(e -> {
+            applySpeedFromField();
+        });
+
+        // Клик по полю — рамка обычная (показываем, что идёт ввод)
+        speedField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                speedField.setStyle(fieldStyle(colors.getGrid()));
             }
-            @Override
-            public Double fromString(String string) {
-                return null;
+            // Blur — НЕ применяем, но возвращаем оранжевую рамку
+            if (wasFocused && !isFocused) {
+                speedField.setStyle(fieldStyle(colors.getSignalOn()));
             }
         });
 
-        speedValueText = new Text(getSpeedString(currentSpeed));
-        speedValueText.setFill(Color.web(colors.getSignalOn()));
-        speedValueText.setFont(Font.font("Monospace", 22));
-        speedValueText.setStyle("-fx-font-weight: bold;");
-
-        speedSlider.valueProperty().addListener((obs, old, val) -> {
-            int idx = val.intValue();
-            if (idx >= 0 && idx < speedLabels.size()) {
-                String label = speedLabels.get(idx);
-                if (label.equals("MAX")) {
-                    currentSpeed = -1;
-                    speedValueText.setText("MAX");
-                } else {
-                    currentSpeed = Integer.parseInt(label);
-                    speedValueText.setText(currentSpeed + " TPS");
-                }
-                if (onSpeedChange != null) {
-                    onSpeedChange.run();
-                }
+        // ESC — откат к текущему и оранжевая рамка
+        speedField.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                setFieldTextSilently(getSpeedString(currentSpeed));
+                speedField.setStyle(fieldStyle(colors.getSignalOn()));
+                speedField.getParent().requestFocus();
+                e.consume();
             }
         });
 
-        speedBox.getChildren().addAll(topSeparator, speedLabel, speedSlider, speedValueText);
+        // ===== Реальный TPS =====
+        actualTpsText = new Text("actual: 0 TPS");
+        actualTpsText.setFill(Color.web(colors.getSignalOn()));
+        actualTpsText.setFont(Font.font("Monospace", 14));
+        actualTpsText.setStyle("-fx-font-weight: bold;");
+
+        speedBox.getChildren().addAll(topSeparator, speedLabel, speedField, actualTpsText);
         getChildren().add(speedBox);
     }
+
+
+    private String fieldStyle(String borderColor) {
+        String bg = colors.getBackground();
+        String fg = colors.getArrow();
+        return FIELD_BASE_STYLE +
+                "-fx-background-color: " + bg + ";" +
+                "-fx-text-fill: " + fg + ";" +
+                "-fx-control-inner-background: " + bg + ";" +
+                "-fx-border-color: " + borderColor + ";";
+    }
+
+    /** Устанавливает текст в поле, не триггеря listener. */
+    private void setFieldTextSilently(String text) {
+        suppressSpeedListener = true;
+        speedField.setText(text);
+        suppressSpeedListener = false;
+    }
+
+    /** Применяет ввод из поля. Вызывается ТОЛЬКО по Enter. */
+    private void applySpeedFromField() {
+        if (speedField == null) return;
+
+        String text = speedField.getText().trim().toUpperCase();
+
+        if (text.isEmpty()) {
+            setFieldTextSilently(getSpeedString(currentSpeed));
+            speedField.getParent().requestFocus();
+            return;
+        }
+
+        int newSpeed;
+        if (text.equals("MAX") || text.equals("-1")) {
+            newSpeed = -1;
+        } else if (text.equals("PAUSE") || text.equals("PAUSED") || text.equals("0")) {
+            newSpeed = 0;
+        } else {
+            try {
+                newSpeed = Integer.parseInt(text);
+                if (newSpeed < 0) newSpeed = -1;
+            } catch (NumberFormatException e) {
+                setFieldTextSilently(getSpeedString(currentSpeed));
+                speedField.getParent().requestFocus();
+                return;
+            }
+        }
+
+        boolean changed = (newSpeed != currentSpeed);
+        currentSpeed = newSpeed;
+
+        setFieldTextSilently(getSpeedString(currentSpeed));
+
+        speedField.setStyle(fieldStyle(colors.getSignalOn()));
+
+        speedField.getParent().requestFocus();
+
+        if (changed && onSpeedChange != null) {
+            onSpeedChange.run();
+        }
+    }
+
+
 
     private void createSimulationStatus() {
         VBox statusBox = new VBox(5);
@@ -185,7 +257,7 @@ public class BlockPalette extends VBox {
         Rectangle topSeparator = new Rectangle(paletteWidth - 40, 2);
         topSeparator.setFill(Color.web(colors.getGrid()));
 
-        Text simLabel = new Text("SIMULATION");
+        Text simLabel = new Text("SIM. STATUS");
         simLabel.setFill(Color.web(colors.getGrid()));
         simLabel.setFont(Font.font("Monospace", 14));
 
@@ -229,18 +301,10 @@ public class BlockPalette extends VBox {
         getChildren().add(layerBox);
     }
 
-    private int getSpeedIndex(int speed) {
-        if (speed == -1) return availableSpeeds.length;
-        for (int i = 0; i < availableSpeeds.length; i++) {
-            if (availableSpeeds[i] == speed) return i;
-        }
-        return 0;
-    }
-
     private String getSpeedString(int speed) {
         if (speed == -1) return "MAX";
-        if (speed == 0) return "PAUSED";
-        return speed + " TPS";
+        if (speed == 0) return "0";
+        return String.valueOf(speed);
     }
 
     public int getCurrentSpeed() { return currentSpeed; }
@@ -248,9 +312,22 @@ public class BlockPalette extends VBox {
 
     public void setCurrentSpeed(int speed) {
         this.currentSpeed = speed;
-        int idx = getSpeedIndex(speed);
-        if (speedSlider != null) speedSlider.setValue(idx);
-        if (speedValueText != null) speedValueText.setText(getSpeedString(speed));
+        if (speedField != null) {
+            setFieldTextSilently(getSpeedString(speed));
+            speedField.setStyle(fieldStyle(colors.getSignalOn()));
+        }
+    }
+
+    /** Реальный TPS. Вызывается из FX-потока. */
+    public void setActualTps(int tps) {
+        if (actualTpsText == null) return;
+        String text;
+        if (currentSpeed == 0) {
+            text = "actual: paused";
+        } else {
+            text = "actual: " + tps + " TPS";
+        }
+        actualTpsText.setText(text);
     }
 
     public void setOnSpeedChange(Runnable callback) { this.onSpeedChange = callback; }

@@ -26,6 +26,11 @@ public class World {
     public static final int TYPE_GETTER = 8;
     public static final int TYPE_PEG = 9;
 
+    // Для сборки строки при saveMap
+    public static final String[] TYPE_NAMES = {
+            "0", "arrow", "and", "or", "xor", "not", "bridge", "power", "getter", "peg"
+    };
+
     public World() {
         Config config = Config.getInstance();
         this.size = config.getWorldSize();
@@ -68,7 +73,6 @@ public class World {
 
         int underscoreIndex = blockType.indexOf('_');
 
-        // Если нет подчёркивания — обрабатываем power и peg (старый формат)
         if (underscoreIndex == -1) {
             if (blockType.equals("power")) {
                 blockTypes[layer][y][x] = TYPE_POWER;
@@ -78,7 +82,6 @@ public class World {
                 return;
             }
             if (blockType.equals("peg")) {
-                // Старый формат без направления — считаем UP
                 blockTypes[layer][y][x] = TYPE_PEG;
                 blockDirs[layer][y][x] = 0;
                 blockStates[layer][y][x] = false;
@@ -133,41 +136,20 @@ public class World {
         signals[layer][y][x] = blockState;
     }
 
+    /**
+     * Обновляет только кэш. Строка blocks[][][] больше не пересобирается —
+     * это убирает миллионы аллокаций String в секунду во время симуляции.
+     * Строка собирается только при сохранении карты (MapManager.saveMap).
+     */
     public void updateBlockState(int layer, int x, int y, boolean state, int dirIndex) {
         if (!isValid(layer, x, y)) return;
 
         int type = blockTypes[layer][y][x];
         if (type == TYPE_EMPTY) return;
 
-        // Обновляем кэш
         blockStates[layer][y][x] = state;
         blockDirs[layer][y][x] = dirIndex;
         signals[layer][y][x] = state;
-
-        // Обновляем строку
-        String blockName = switch (type) {
-            case TYPE_ARROW -> "arrow";
-            case TYPE_AND -> "and";
-            case TYPE_OR -> "or";
-            case TYPE_XOR -> "xor";
-            case TYPE_NOT -> "not";
-            case TYPE_BRIDGE -> "bridge";
-            case TYPE_POWER -> "power";
-            case TYPE_GETTER -> "getter";
-            case TYPE_PEG -> "peg";
-            default -> "0";
-        };
-
-        char stateChar = state ? 't' : 'f';
-        char dirChar = switch (dirIndex) {
-            case 0 -> 'u';
-            case 1 -> 'r';
-            case 2 -> 'd';
-            case 3 -> 'l';
-            default -> 'u';
-        };
-
-        blocks[layer][y][x] = blockName + "_" + stateChar + dirChar;
     }
 
     public void removeBlock(int layer, int x, int y) {
@@ -178,6 +160,11 @@ public class World {
             blockDirs[layer][y][x] = 0;
             blockStates[layer][y][x] = false;
         }
+    }
+
+    /** Прямой доступ к массиву сигналов — только для SimulationEngine. */
+    public boolean[][][] getSignalsArray() {
+        return signals;
     }
 
     public String getBlock(int layer, int x, int y) {
