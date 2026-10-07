@@ -710,7 +710,7 @@ public class MainState implements State {
                 break;
 
             case E:
-                if (!selecting && !previewMode) {
+                if (!selecting) {
                     selecting = true;
                     if (keyboardCursorActive) {
                         selectionStartX = keyboardCursorX;
@@ -761,11 +761,10 @@ public class MainState implements State {
             case S: palette.setDirection(Direction.DOWN); break;
             case D:
                 if (previewMode) {
-                    // Выход из preview-режима БЕЗ очистки статического буфера
                     previewMode = false;
                     selection.clear();
                     requestRender();
-                    System.out.println("Preview mode off (clipboard preserved)");
+                    System.out.println("Preview mode off");
                 } else if (selection.hasSelection()) {
                     selection.clear();
                     requestRender();
@@ -876,21 +875,7 @@ public class MainState implements State {
             }
         } else if (event.getButton() == MouseButton.PRIMARY) {
             if (!overPalette && !selecting && !deleteMode) {
-                if (previewMode && Selection.hasClipboard()) {
-                    // Вставка из буфера по ЛКМ
-                    double worldX = camera.screenToWorldX(
-                            getCanvasCoordinates(event.getSceneX(), event.getSceneY()).getX());
-                    double worldY = camera.screenToWorldY(
-                            getCanvasCoordinates(event.getSceneX(), event.getSceneY()).getY());
-                    int px = (int) Math.floor(worldX / camera.getBaseCellSize());
-                    int py = (int) Math.floor(worldY / camera.getBaseCellSize());
-                    selection.paste(world, world.getCurrentLayer(), px, py);
-                    simulationEngine.markWorldChanged();
-                    requestRender();
-                    System.out.println("Paste (mouse) at (" + px + ", " + py + ")");
-                } else {
-                    placeBlock(event.getSceneX(), event.getSceneY());
-                }
+                placeBlock(event.getSceneX(), event.getSceneY());
             }
         }
     }

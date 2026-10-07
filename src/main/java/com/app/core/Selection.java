@@ -61,6 +61,7 @@ public class Selection {
     public void clear() {
         blocks.clear();
         hasSelection = false;
+        clipboardBlocks = new ArrayList<>();
     }
 
     // ============================================================
