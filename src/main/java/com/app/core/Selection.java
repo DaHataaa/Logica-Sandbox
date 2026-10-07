@@ -4,9 +4,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Selection {
+    // ===== СТАТИЧЕСКИЙ БУФЕР ОБМЕНА (общий для всех карт) =====
+    private static List<List<String>> clipboardBlocks = new ArrayList<>();
+    private static boolean clipboardHasData = false;
+
+    // ===== Экземплярные поля (текущее выделение на этой карте) =====
     private int startX, startY;
     private int endX, endY;
     private int layer;
+
+    // Локальное выделение (для cut/copy/delete)
     private List<List<String>> blocks;
     private boolean hasSelection;
 
@@ -15,6 +22,9 @@ public class Selection {
         hasSelection = false;
     }
 
+    // ============================================================
+    // ТЕКУЩЕЕ ВЫДЕЛЕНИЕ
+    // ============================================================
     public void startSelection(int x, int y, int layer) {
         this.startX = x;
         this.startY = y;
@@ -53,46 +63,27 @@ public class Selection {
         hasSelection = false;
     }
 
-    public void paste(World world, int targetLayer, int mouseX, int mouseY) {
+    // ============================================================
+    // КОПИРОВАНИЕ / ВЫРЕЗАНИЕ → в статический буфер
+    // ============================================================
+    public void copyToClipboard() {
         if (!hasSelection || blocks.isEmpty()) return;
 
-        int width = blocks.get(0).size();
-        int height = blocks.size();
-
-        for (int dy = 0; dy < height; dy++) {
-            for (int dx = 0; dx < width; dx++) {
-                int x = mouseX + dx;
-                int y = mouseY + dy;
-                if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
-                    String block = blocks.get(dy).get(dx);
-                    if (!block.equals("0")) {
-                        world.setBlock(targetLayer, x, y, block);
-                    }
-                }
-            }
+        // Глубокая копия, чтобы данные не зависели от этого экземпляра
+        clipboardBlocks = new ArrayList<>();
+        for (List<String> row : blocks) {
+            clipboardBlocks.add(new ArrayList<>(row));
         }
-
-        for (int dy = 0; dy < height; dy++) {
-            for (int dx = 0; dx < width; dx++) {
-                int x = mouseX + dx;
-                int y = mouseY + dy;
-                if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
-                    String block = world.getBlock(targetLayer, x, y);
-                    if (block != null && !block.equals("0")) {
-                        String[] parts = block.split("_");
-                        if (parts.length > 1 && parts[1].length() == 2) {
-                            char state = parts[1].charAt(0);
-                            world.setSignal(targetLayer, x, y, state == 't');
-                        }
-                    }
-                }
-            }
-        }
+        clipboardHasData = true;
     }
 
     public void cut(World world, int layer) {
         if (!hasSelection) return;
 
+        // Сначала копируем в буфер
+        copyToClipboard();
+
+        // Потом удаляем с карты
         for (int dy = 0; dy < blocks.size(); dy++) {
             for (int dx = 0; dx < blocks.get(dy).size(); dx++) {
                 int x = startX + dx;
@@ -123,6 +114,50 @@ public class Selection {
         }
     }
 
+    // ============================================================
+    // ВСТАВКА ИЗ СТАТИЧЕСКОГО БУФЕРА
+    // ============================================================
+    public void paste(World world, int targetLayer, int mouseX, int mouseY) {
+        if (!clipboardHasData || clipboardBlocks.isEmpty()) return;
+
+        int width = clipboardBlocks.get(0).size();
+        int height = clipboardBlocks.size();
+
+        for (int dy = 0; dy < height; dy++) {
+            for (int dx = 0; dx < width; dx++) {
+                int x = mouseX + dx;
+                int y = mouseY + dy;
+                if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
+                    String block = clipboardBlocks.get(dy).get(dx);
+                    if (!block.equals("0")) {
+                        world.setBlock(targetLayer, x, y, block);
+                    }
+                }
+            }
+        }
+
+        // Восстанавливаем сигналы
+        for (int dy = 0; dy < height; dy++) {
+            for (int dx = 0; dx < width; dx++) {
+                int x = mouseX + dx;
+                int y = mouseY + dy;
+                if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
+                    String block = world.getBlock(targetLayer, x, y);
+                    if (block != null && !block.equals("0")) {
+                        String[] parts = block.split("_");
+                        if (parts.length > 1 && parts[1].length() == 2) {
+                            char state = parts[1].charAt(0);
+                            world.setSignal(targetLayer, x, y, state == 't');
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ============================================================
+    // ГЕТТЕРЫ ЛОКАЛЬНОГО ВЫДЕЛЕНИЯ
+    // ============================================================
     public boolean hasSelection() { return hasSelection; }
     public int getStartX() { return startX; }
     public int getStartY() { return startY; }
@@ -131,4 +166,12 @@ public class Selection {
     public List<List<String>> getBlocks() { return blocks; }
     public int getWidth() { return blocks.isEmpty() ? 0 : blocks.get(0).size(); }
     public int getHeight() { return blocks.size(); }
+
+    // ===== Геттеры статического буфера обмена =====
+    public static boolean hasClipboard() { return clipboardHasData; }
+    public static List<List<String>> getClipboardBlocks() { return clipboardBlocks; }
+    public static int getClipboardWidth() {
+        return clipboardBlocks.isEmpty() ? 0 : clipboardBlocks.get(0).size();
+    }
+    public static int getClipboardHeight() { return clipboardBlocks.size(); }
 }

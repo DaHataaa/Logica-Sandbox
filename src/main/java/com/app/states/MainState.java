@@ -24,6 +24,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.paint.Color;
 import javafx.scene.canvas.GraphicsContext;
 
+import java.util.List;
 import java.util.Optional;
 
 public class MainState implements State {
@@ -251,7 +252,7 @@ public class MainState implements State {
     private void handlePlaceAction() {
         ensureKeyboardCursor();
 
-        if (previewMode && selection.hasSelection()) {
+        if (previewMode && Selection.hasClipboard()) {
             selection.paste(world, world.getCurrentLayer(), keyboardCursorX, keyboardCursorY);
             simulationEngine.markWorldChanged();
             requestRender();
@@ -445,10 +446,13 @@ public class MainState implements State {
     }
 
     private void renderPreview(GraphicsContext gc, int mouseCellX, int mouseCellY) {
-        if (!previewMode || !selection.hasSelection()) return;
+        if (!previewMode || !Selection.hasClipboard()) return;
 
-        int width = selection.getWidth();
-        int height = selection.getHeight();
+        List<List<String>> clip = Selection.getClipboardBlocks();
+        int height = clip.size();
+        if (height == 0) return;
+        int width = clip.get(0).size();
+
         int cellScreenSize = camera.getCellScreenSize();
 
         double screenX = camera.worldToScreenX(mouseCellX * camera.getBaseCellSize());
@@ -456,7 +460,7 @@ public class MainState implements State {
 
         for (int dy = 0; dy < height; dy++) {
             for (int dx = 0; dx < width; dx++) {
-                String block = selection.getBlocks().get(dy).get(dx);
+                String block = clip.get(dy).get(dx);
                 if (block == null || block.equals("0")) continue;
 
                 String[] parts = block.split("_");
@@ -466,7 +470,8 @@ public class MainState implements State {
                     dir = Direction.fromChar(parts[1].charAt(1));
                 }
 
-                int[] sprite = SpriteManager.getInstance().getSpriteWithDirection(blockName, cellScreenSize, dir, false);
+                int[] sprite = SpriteManager.getInstance()
+                        .getSpriteWithDirection(blockName, cellScreenSize, dir, false);
                 if (sprite != null) {
                     int ix = (int) (screenX + dx * cellScreenSize);
                     int iy = (int) (screenY + dy * cellScreenSize);
@@ -511,7 +516,7 @@ public class MainState implements State {
             javafx.application.Platform.runLater(() -> {
                 if (root.getScene() != null) {
                     javafx.stage.Stage stage = (javafx.stage.Stage) root.getScene().getWindow();
-                    if (stage != null) stage.setTitle("Logic 2 - " + currentMapName);
+                    if (stage != null) stage.setTitle("Logica-Sandbox - " + currentMapName);
                 }
             });
         } else {
@@ -523,6 +528,12 @@ public class MainState implements State {
     public void enter() {
         System.out.println("Entering MainState" + (currentMapName != null ? " - " + currentMapName : ""));
         nextState = this;
+
+        // Если в буфере что-то есть — сразу показываем превью
+        if (Selection.hasClipboard()) {
+            previewMode = true;
+            System.out.println("Clipboard has data — preview mode enabled");
+        }
 
         if (root.getScene() != null) {
             installKeyboardFilter(root.getScene());
@@ -587,7 +598,7 @@ public class MainState implements State {
         GraphicsContext gc = renderer.getCanvas().getGraphicsContext2D();
 
         // 1) Превью копирования/вставки
-        if (previewMode && selection.hasSelection()) {
+        if (previewMode && Selection.hasClipboard()) {
             int previewCellX, previewCellY;
             if (keyboardCursorActive) {
                 previewCellX = keyboardCursorX;
@@ -749,9 +760,14 @@ public class MainState implements State {
             case A: palette.setDirection(Direction.LEFT); break;
             case S: palette.setDirection(Direction.DOWN); break;
             case D:
-                if (selection.hasSelection()) {
-                    selection.clear();
+                if (previewMode) {
+                    // Выход из preview-режима БЕЗ очистки статического буфера
                     previewMode = false;
+                    selection.clear();
+                    requestRender();
+                    System.out.println("Preview mode off (clipboard preserved)");
+                } else if (selection.hasSelection()) {
+                    selection.clear();
                     requestRender();
                 } else {
                     palette.setDirection(Direction.RIGHT);
@@ -760,24 +776,25 @@ public class MainState implements State {
 
             case X:
                 if (selection.hasSelection() && !previewMode && !selecting) {
-                    selection.cut(world, world.getCurrentLayer());
+                    selection.cut(world, world.getCurrentLayer());  // внутри копирует в буфер
                     simulationEngine.markWorldChanged();
                     previewMode = true;
                     requestRender();
-                    System.out.println("Cut: selection removed, preview mode activated");
+                    System.out.println("Cut: selection removed, buffer filled, preview mode activated");
                 }
                 break;
 
             case C:
                 if (selection.hasSelection() && !previewMode && !selecting) {
+                    selection.copyToClipboard();
                     previewMode = true;
                     requestRender();
-                    System.out.println("Copy: preview mode activated");
+                    System.out.println("Copy: buffer filled, preview mode activated");
                 }
                 break;
 
             case V:
-                if (previewMode && selection.hasSelection()) {
+                if (previewMode && Selection.hasClipboard()) {
                     int px, py;
                     if (keyboardCursorActive) {
                         px = keyboardCursorX;
@@ -858,8 +875,22 @@ public class MainState implements State {
                 renderer.getCanvas().setCursor(javafx.scene.Cursor.CLOSED_HAND);
             }
         } else if (event.getButton() == MouseButton.PRIMARY) {
-            if (!overPalette && !selecting && !previewMode && !deleteMode) {
-                placeBlock(event.getSceneX(), event.getSceneY());
+            if (!overPalette && !selecting && !deleteMode) {
+                if (previewMode && Selection.hasClipboard()) {
+                    // Вставка из буфера по ЛКМ
+                    double worldX = camera.screenToWorldX(
+                            getCanvasCoordinates(event.getSceneX(), event.getSceneY()).getX());
+                    double worldY = camera.screenToWorldY(
+                            getCanvasCoordinates(event.getSceneX(), event.getSceneY()).getY());
+                    int px = (int) Math.floor(worldX / camera.getBaseCellSize());
+                    int py = (int) Math.floor(worldY / camera.getBaseCellSize());
+                    selection.paste(world, world.getCurrentLayer(), px, py);
+                    simulationEngine.markWorldChanged();
+                    requestRender();
+                    System.out.println("Paste (mouse) at (" + px + ", " + py + ")");
+                } else {
+                    placeBlock(event.getSceneX(), event.getSceneY());
+                }
             }
         }
     }
@@ -886,7 +917,8 @@ public class MainState implements State {
             lastMouseX = event.getSceneX();
             lastMouseY = event.getSceneY();
             requestRender();
-        } else if (event.getButton() == MouseButton.PRIMARY && !overPalette && !selecting && !previewMode && !deleteMode) {
+        } else if (event.getButton() == MouseButton.PRIMARY && !overPalette
+                && !selecting && !previewMode && !deleteMode) {
             placeBlock(event.getSceneX(), event.getSceneY());
         }
 
