@@ -59,7 +59,8 @@ public class SpriteLoader {
     public static Map<String, Sprite> loadAllSprites(String texpackName) {
         Map<String, Sprite> sprites = new HashMap<>();
 
-        String[] names = {"arrow", "getter", "bridge", "peg", "power", "not", "or", "and", "xor"};
+        // ← добавлен "text"
+        String[] names = {"arrow", "getter", "bridge", "peg", "power", "not", "or", "and", "xor", "text"};
 
         for (String name : names) {
             Sprite sprite = loadSprite(texpackName, name);

@@ -7,6 +7,10 @@ public class World {
     private final int layers;
     private final String[][][] blocks;
     private final boolean[][][] signals;
+
+    // КЭШ ТЕКСТОВ (только для TYPE_TEXT): "TRUE|FALS" или null
+    public final String[][][] blockTexts;
+
     private int currentLayer;
 
     // КЭШ БЛОКОВ
@@ -25,11 +29,15 @@ public class World {
     public static final int TYPE_POWER = 7;
     public static final int TYPE_GETTER = 8;
     public static final int TYPE_PEG = 9;
+    public static final int TYPE_TEXT = 10;
 
     // Для сборки строки при saveMap
     public static final String[] TYPE_NAMES = {
-            "0", "arrow", "and", "or", "xor", "not", "bridge", "power", "getter", "peg"
+            "0", "arrow", "and", "or", "xor", "not", "bridge", "power", "getter", "peg", "text"
     };
+
+    public static final String DEFAULT_TEXT_TRUE = "TRUE";
+    public static final String DEFAULT_TEXT_FALSE = "FALS";
 
     public World() {
         Config config = Config.getInstance();
@@ -40,6 +48,7 @@ public class World {
         this.blockTypes = new int[layers][size][size];
         this.blockDirs = new int[layers][size][size];
         this.blockStates = new boolean[layers][size][size];
+        this.blockTexts = new String[layers][size][size];
         this.currentLayer = 0;
         clear();
     }
@@ -53,6 +62,7 @@ public class World {
                     blockTypes[l][y][x] = TYPE_EMPTY;
                     blockDirs[l][y][x] = 0;
                     blockStates[l][y][x] = false;
+                    blockTexts[l][y][x] = null;
                 }
             }
         }
@@ -62,6 +72,7 @@ public class World {
         if (!isValid(layer, x, y)) return;
 
         blocks[layer][y][x] = blockType;
+        blockTexts[layer][y][x] = null;
 
         if (blockType == null || blockType.equals("0")) {
             blockTypes[layer][y][x] = TYPE_EMPTY;
@@ -71,8 +82,17 @@ public class World {
             return;
         }
 
+        // ===== Отрезаем текстовую часть (суффикс после '|') =====
+        String textsPart = null;
+        int pipeIdx = blockType.indexOf('|');
+        if (pipeIdx >= 0) {
+            textsPart = blockType.substring(pipeIdx + 1);
+            blockType = blockType.substring(0, pipeIdx);
+        }
+
         int underscoreIndex = blockType.indexOf('_');
 
+        // ===== Блоки без суффиксов: power, peg, text =====
         if (underscoreIndex == -1) {
             if (blockType.equals("power")) {
                 blockTypes[layer][y][x] = TYPE_POWER;
@@ -88,6 +108,19 @@ public class World {
                 signals[layer][y][x] = false;
                 return;
             }
+            if (blockType.equals("text")) {
+                blockTypes[layer][y][x] = TYPE_TEXT;
+                blockDirs[layer][y][x] = 0;
+                blockStates[layer][y][x] = false;
+                signals[layer][y][x] = false;
+                String raw = (textsPart != null) ? textsPart
+                        : (DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE);
+                // _ → пробел (обратное экранирование)
+                raw = raw.replace('_', ' ');
+                blockTexts[layer][y][x] = raw;
+                return;
+            }
+            // Неизвестный блок без суффикса — пусто
             blockTypes[layer][y][x] = TYPE_EMPTY;
             blockDirs[layer][y][x] = 0;
             blockStates[layer][y][x] = false;
@@ -117,6 +150,7 @@ public class World {
             case "power" -> TYPE_POWER;
             case "getter" -> TYPE_GETTER;
             case "peg" -> TYPE_PEG;
+            case "text" -> TYPE_TEXT;
             default -> TYPE_EMPTY;
         };
 
@@ -134,13 +168,16 @@ public class World {
         blockDirs[layer][y][x] = dirIndex;
         blockStates[layer][y][x] = blockState;
         signals[layer][y][x] = blockState;
+
+        if (type == TYPE_TEXT) {
+            String raw = (textsPart != null) ? textsPart
+                    : (DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE);
+            // _ → пробел (обратное экранирование)
+            raw = raw.replace('_', ' ');
+            blockTexts[layer][y][x] = raw;
+        }
     }
 
-    /**
-     * Обновляет только кэш. Строка blocks[][][] больше не пересобирается —
-     * это убирает миллионы аллокаций String в секунду во время симуляции.
-     * Строка собирается только при сохранении карты (MapManager.saveMap).
-     */
     public void updateBlockState(int layer, int x, int y, boolean state, int dirIndex) {
         if (!isValid(layer, x, y)) return;
 
@@ -159,16 +196,25 @@ public class World {
             blockTypes[layer][y][x] = TYPE_EMPTY;
             blockDirs[layer][y][x] = 0;
             blockStates[layer][y][x] = false;
+            blockTexts[layer][y][x] = null;
         }
     }
 
-    /** Прямой доступ к массиву сигналов — только для SimulationEngine. */
     public boolean[][][] getSignalsArray() {
         return signals;
     }
 
     public String getBlock(int layer, int x, int y) {
         if (!isValid(layer, x, y)) return null;
+
+        int type = blockTypes[layer][y][x];
+        if (type == TYPE_TEXT) {
+            String texts = blockTexts[layer][y][x];
+            if (texts == null) texts = DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE;
+            char s = blockStates[layer][y][x] ? 't' : 'f';
+            // Возвращаем с пробелами — это внутренний формат (буфер обмена, saveMap)
+            return "text_" + s + "f|" + texts;
+        }
         return blocks[layer][y][x];
     }
 
@@ -227,6 +273,46 @@ public class World {
         }
 
         return false;
+    }
+
+    // ===== Методы для текстовых блоков =====
+
+    /** Возвращает "TRUE|FALS" или null. */
+    public String getBlockTexts(int layer, int x, int y) {
+        if (!isValid(layer, x, y)) return null;
+        return blockTexts[layer][y][x];
+    }
+
+    /** Устанавливает два текста (вызывается из диалога). */
+    public void setBlockTexts(int layer, int x, int y, String trueText, String falseText) {
+        if (!isValid(layer, x, y)) return;
+        if (blockTypes[layer][y][x] != TYPE_TEXT) return;
+
+        if (trueText == null) trueText = "";
+        if (falseText == null) falseText = "";
+
+        blockTexts[layer][y][x] = trueText + "|" + falseText;
+        rebuildBlockString(layer, x, y);
+    }
+
+    /** Устанавливает raw-строку "TRUE|FALS" (для загрузки/вставки). */
+    public void setBlockTextsRaw(int layer, int x, int y, String raw) {
+        if (!isValid(layer, x, y)) return;
+        if (blockTypes[layer][y][x] != TYPE_TEXT) return;
+        if (raw != null) {
+            raw = raw.replace('_', ' ');
+        }
+        blockTexts[layer][y][x] = raw;
+        rebuildBlockString(layer, x, y);
+    }
+
+    /** Пересобирает строку блока для text-блока. */
+    private void rebuildBlockString(int layer, int x, int y) {
+        if (blockTypes[layer][y][x] != TYPE_TEXT) return;
+        String texts = blockTexts[layer][y][x];
+        if (texts == null) texts = DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE;
+        char s = blockStates[layer][y][x] ? 't' : 'f';
+        blocks[layer][y][x] = "text_" + s + "f|" + texts;
     }
 
     public int getSize() { return size; }

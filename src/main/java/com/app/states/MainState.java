@@ -14,6 +14,7 @@ import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
 import com.app.ui.BlockPalette;
 import com.app.ui.HelpDialog;
+import com.app.ui.TextEditorDialog;
 import javafx.animation.AnimationTimer;
 import javafx.geometry.Point2D;
 import javafx.scene.Scene;
@@ -23,6 +24,7 @@ import javafx.scene.input.*;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.paint.Color;
 import javafx.scene.canvas.GraphicsContext;
+import javafx.stage.Stage;
 
 import java.util.List;
 import java.util.Optional;
@@ -109,7 +111,6 @@ public class MainState implements State {
         this.powerColor = colors.getPower();
         this.gridColor = colors.getGrid();
 
-        // Рендер выполняется централизованно в update() по флагу needsRender
         simulationEngine.setOnTickComplete(null);
 
         this.root = new BorderPane();
@@ -140,7 +141,7 @@ public class MainState implements State {
 
         javafx.application.Platform.runLater(() -> {
             if (root.getScene() != null) {
-                javafx.stage.Stage stage = (javafx.stage.Stage) root.getScene().getWindow();
+                Stage stage = (Stage) root.getScene().getWindow();
                 if (stage != null && currentMapName != null) {
                     stage.setTitle("Logica-Sandbox - " + currentMapName);
                 }
@@ -209,9 +210,9 @@ public class MainState implements State {
                 return;
             }
 
-            // ===== F — установка блока =====
+            // ===== F — действие (поставить блок / открыть редактор текста) =====
             if (code == KeyCode.F && !event.isControlDown()) {
-                handlePlaceAction();
+                handleFAction();
                 fHandledOnPress = true;
                 event.consume();
             }
@@ -221,7 +222,7 @@ public class MainState implements State {
             if (event.getTarget() instanceof TextInputControl) return;
             if (event.getCode() == KeyCode.F) {
                 if (!fHandledOnPress) {
-                    handlePlaceAction();
+                    handleFAction();
                 }
                 fHandledOnPress = false;
                 event.consume();
@@ -231,6 +232,7 @@ public class MainState implements State {
 
     // ===== Логика клавиатурного курсора =====
     private void handleKeyboardCursorMove(KeyCode code) {
+        // Только стрелки активируют клавиатурный режим
         ensureKeyboardCursor();
 
         switch (code) {
@@ -249,19 +251,11 @@ public class MainState implements State {
         requestRender();
     }
 
-    private void handlePlaceAction() {
-        ensureKeyboardCursor();
-
-        if (previewMode && Selection.hasClipboard()) {
-            selection.paste(world, world.getCurrentLayer(), keyboardCursorX, keyboardCursorY);
-            simulationEngine.markWorldChanged();
-            requestRender();
-            System.out.println("Paste (F) at (" + keyboardCursorX + ", " + keyboardCursorY + ")");
-        } else if (!selecting) {
-            placeBlockAtCell(keyboardCursorX, keyboardCursorY);
-        }
-    }
-
+    /**
+     * Активирует клавиатурный курсор (только если ещё не активен),
+     * позиционируя его на клетку под текущим курсором мыши.
+     * Вызывается ТОЛЬКО из handleKeyboardCursorMove (по стрелкам).
+     */
     private void ensureKeyboardCursor() {
         if (!keyboardCursorActive) {
             int[] cell = getCellUnderSceneCoords(lastSceneMouseX, lastSceneMouseY);
@@ -273,6 +267,18 @@ public class MainState implements State {
             keyboardCursorY = cell[1];
             keyboardCursorActive = true;
         }
+    }
+
+    /**
+     * Возвращает клетку активного курсора БЕЗ активации клавиатурного режима.
+     * Если клавиатурный курсор активен — его клетка.
+     * Иначе — клетка под мышью.
+     */
+    private int[] getActiveCursorCell() {
+        if (keyboardCursorActive) {
+            return new int[]{keyboardCursorX, keyboardCursorY};
+        }
+        return getCellUnderSceneCoords(lastSceneMouseX, lastSceneMouseY);
     }
 
     private int[] getCellUnderSceneCoords(double sceneX, double sceneY) {
@@ -290,6 +296,68 @@ public class MainState implements State {
         return cx >= 0 && cx < world.getSize() && cy >= 0 && cy < world.getSize();
     }
 
+    /**
+     * F-действие:
+     *  - если под активным курсором text-блок → открыть редактор
+     *  - иначе → поставить выбранный блок
+     * НЕ активирует клавиатурный режим (см. getActiveCursorCell).
+     */
+    private void handleFAction() {
+        int[] cell = getActiveCursorCell();
+        int cx = cell[0];
+        int cy = cell[1];
+
+        if (!isValidCell(cx, cy)) return;
+
+        int layer = world.getCurrentLayer();
+        if (world.blockTypes[layer][cy][cx] == World.TYPE_TEXT) {
+            openTextEditor(cx, cy);
+        } else {
+            placeBlockAtCell(cx, cy);
+        }
+    }
+
+    /**
+     * Открывает диалог редактирования текста. После OK — сохраняет и перерисовывает.
+     */
+    private void openTextEditor(int cellX, int cellY) {
+        int layer = world.getCurrentLayer();
+        String raw = world.getBlockTexts(layer, cellX, cellY);
+
+        String currentTrue = "";
+        String currentFalse = "";
+        if (raw != null) {
+            int pipe = raw.indexOf('|');
+            if (pipe >= 0) {
+                currentTrue = raw.substring(0, pipe);
+                currentFalse = raw.substring(pipe + 1);
+            } else {
+                currentTrue = raw;
+            }
+        } else {
+            currentTrue = World.DEFAULT_TEXT_TRUE;
+            currentFalse = World.DEFAULT_TEXT_FALSE;
+        }
+
+        Stage owner = null;
+        if (root.getScene() != null && root.getScene().getWindow() instanceof Stage) {
+            owner = (Stage) root.getScene().getWindow();
+        }
+
+        TextEditorDialog.Result result =
+                TextEditorDialog.show(owner, currentTrue, currentFalse);
+
+        if (result != null) {
+            world.setBlockTexts(layer, cellX, cellY, result.trueText, result.falseText);
+            requestRender();
+            System.out.println("Text block updated at (" + cellX + ", " + cellY
+                    + "): TRUE=\"" + result.trueText + "\" FALS=\"" + result.falseText + "\"");
+        }
+
+        // Возвращаем фокус на канвас, чтобы стрелки/F работали
+        javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
+    }
+
     private void placeBlockAtCell(int cellX, int cellY) {
         if (!isValidCell(cellX, cellY)) return;
 
@@ -303,7 +371,7 @@ public class MainState implements State {
 
         world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
         simulationEngine.markWorldChanged();
-        System.out.println("Placed (kb): " + blockStr + " at (" + cellX + ", " + cellY
+        System.out.println("Placed (F): " + blockStr + " at (" + cellX + ", " + cellY
                 + ") on layer " + world.getCurrentLayer());
         requestRender();
     }
@@ -454,16 +522,19 @@ public class MainState implements State {
         int width = clip.get(0).size();
 
         int cellScreenSize = camera.getCellScreenSize();
-
-        double screenX = camera.worldToScreenX(mouseCellX * camera.getBaseCellSize());
-        double screenY = camera.worldToScreenY(mouseCellY * camera.getBaseCellSize());
+        int baseCell = camera.getBaseCellSize();
 
         for (int dy = 0; dy < height; dy++) {
             for (int dx = 0; dx < width; dx++) {
                 String block = clip.get(dy).get(dx);
                 if (block == null || block.equals("0")) continue;
 
-                String[] parts = block.split("_");
+                // Отрезаем текстовую часть для выбора спрайта
+                String spritePart = block;
+                int pipe = block.indexOf('|');
+                if (pipe >= 0) spritePart = block.substring(0, pipe);
+
+                String[] parts = spritePart.split("_");
                 String blockName = parts[0];
                 Direction dir = Direction.UP;
                 if (parts.length > 1 && parts[1].length() == 2) {
@@ -473,16 +544,27 @@ public class MainState implements State {
                 int[] sprite = SpriteManager.getInstance()
                         .getSpriteWithDirection(blockName, cellScreenSize, dir, false);
                 if (sprite != null) {
-                    int ix = (int) (screenX + dx * cellScreenSize);
-                    int iy = (int) (screenY + dy * cellScreenSize);
+                    // Каждая клетка — от своей world-координаты (без накопления)
+                    int cellX = mouseCellX + dx;
+                    int cellY = mouseCellY + dy;
+                    double cellScreenX = camera.worldToScreenX(cellX * baseCell);
+                    double cellScreenY = camera.worldToScreenY(cellY * baseCell);
+                    int ix = (int) Math.round(cellScreenX);
+                    int iy = (int) Math.round(cellScreenY);
                     renderer.drawSprite(gc, sprite, cellScreenSize, ix, iy);
                 }
             }
         }
 
+        // Рамка — тоже от точных world-координат
+        double screenX1 = camera.worldToScreenX(mouseCellX * baseCell);
+        double screenY1 = camera.worldToScreenY(mouseCellY * baseCell);
+        double screenX2 = camera.worldToScreenX((mouseCellX + width) * baseCell);
+        double screenY2 = camera.worldToScreenY((mouseCellY + height) * baseCell);
+
         gc.setStroke(Color.web(gridColor));
         gc.setLineWidth(3);
-        gc.strokeRect(screenX, screenY, width * cellScreenSize, height * cellScreenSize);
+        gc.strokeRect(screenX1, screenY1, screenX2 - screenX1, screenY2 - screenY1);
     }
 
     private void saveMap() {
@@ -515,7 +597,7 @@ public class MainState implements State {
             System.out.println("Map saved: " + mapName);
             javafx.application.Platform.runLater(() -> {
                 if (root.getScene() != null) {
-                    javafx.stage.Stage stage = (javafx.stage.Stage) root.getScene().getWindow();
+                    Stage stage = (Stage) root.getScene().getWindow();
                     if (stage != null) stage.setTitle("Logica-Sandbox - " + currentMapName);
                 }
             });
@@ -529,9 +611,9 @@ public class MainState implements State {
         System.out.println("Entering MainState" + (currentMapName != null ? " - " + currentMapName : ""));
         nextState = this;
 
-        // Если в буфере что-то есть — сразу показываем превью
-        if (Selection.hasClipboard()) {
-            previewMode = true;
+        // preview и буфер неразрывны
+        previewMode = Selection.hasClipboard();
+        if (previewMode) {
             System.out.println("Clipboard has data — preview mode enabled");
         }
 
@@ -548,17 +630,18 @@ public class MainState implements State {
     public void exit() {
         System.out.println("Exiting MainState");
         simulationEngine.stop();
-        if (deleteTimer != null) {
-            deleteTimer.stop();
-        }
-        if (camera != null) {
-            camera.stop();
-        }
+        if (deleteTimer != null) deleteTimer.stop();
+        if (camera != null) camera.stop();
+        if (selection != null) selection.clear();
+        previewMode = false;
+        keyboardCursorActive = false;
+        panning = false;
+        deleteMode = false;
+        // Буфер НЕ трогаем — он сохраняется для следующей карты
     }
 
     @Override
     public void update() {
-        // ===== Расчёт deltaSeconds =====
         long now = System.nanoTime();
         double deltaSeconds = 0;
         if (lastFrameNanos != 0) {
@@ -567,7 +650,7 @@ public class MainState implements State {
         }
         lastFrameNanos = now;
 
-        // ===== Слежение камеры ТОЛЬКО за клавиатурным курсором =====
+        // Слежение камеры ТОЛЬКО за клавиатурным курсором
         if (keyboardCursorActive) {
             double cursorScreenX = camera.worldToScreenX(
                     (keyboardCursorX + 0.5) * camera.getBaseCellSize()
@@ -582,13 +665,11 @@ public class MainState implements State {
                     CameraFollower.DEAD_ZONE_KEYBOARD,
                     CameraFollower.SMOOTHING_KEYBOARD
             );
-            // камера могла сдвинуться — нужен рендер
             requestRender();
         } else {
             cameraFollower.reset();
         }
 
-        // ===== Рендер только когда нужно =====
         boolean simRunning = simulationEngine.isRunning();
         if (needsRender || simRunning) {
             renderer.render();
@@ -672,7 +753,6 @@ public class MainState implements State {
 
     @Override
     public void handleKeyPressed(KeyEvent event) {
-        // Ctrl+S — только сохранение, не трогаем направления
         if (event.isControlDown()) {
             if (event.isShiftDown()) {
                 if (event.getCode() == KeyCode.S) {
@@ -763,8 +843,9 @@ public class MainState implements State {
                 if (previewMode) {
                     previewMode = false;
                     selection.clear();
+                    Selection.resetClipboard();
                     requestRender();
-                    System.out.println("Preview mode off");
+                    System.out.println("Preview mode off, clipboard cleared");
                 } else if (selection.hasSelection()) {
                     selection.clear();
                     requestRender();
@@ -775,7 +856,7 @@ public class MainState implements State {
 
             case X:
                 if (selection.hasSelection() && !previewMode && !selecting) {
-                    selection.cut(world, world.getCurrentLayer());  // внутри копирует в буфер
+                    selection.cut(world, world.getCurrentLayer());
                     simulationEngine.markWorldChanged();
                     previewMode = true;
                     requestRender();
@@ -793,7 +874,7 @@ public class MainState implements State {
                 break;
 
             case V:
-                if (previewMode && Selection.hasClipboard()) {
+                if (Selection.hasClipboard()) {
                     int px, py;
                     if (keyboardCursorActive) {
                         px = keyboardCursorX;
@@ -808,6 +889,7 @@ public class MainState implements State {
                     simulationEngine.markWorldChanged();
                     requestRender();
                     System.out.println("Paste done at (" + px + ", " + py + ")");
+                    // previewMode остаётся true — буфер не пуст
                 }
                 break;
 

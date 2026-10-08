@@ -4,12 +4,13 @@ public enum BlockType {
     ARROW("arrow", true),
     GETTER("getter", true),
     BRIDGE("bridge", true),
-    PEG("peg", false),            // ← ИСПРАВЛЕНО: был false
+    PEG("peg", false),
     POWER("power", false),
     NOT("not", true),
     OR("or", true),
     AND("and", true),
-    XOR("xor", true);
+    XOR("xor", true),
+    TEXT("text", false);   // ← новый блок, без направления
 
     private final String name;
     private final boolean hasDirection;

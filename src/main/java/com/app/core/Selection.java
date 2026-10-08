@@ -20,6 +20,8 @@ public class Selection {
     public Selection() {
         blocks = new ArrayList<>();
         hasSelection = false;
+        startX = startY = endX = endY = 0;
+        layer = 0;
     }
 
     // ============================================================
@@ -28,6 +30,8 @@ public class Selection {
     public void startSelection(int x, int y, int layer) {
         this.startX = x;
         this.startY = y;
+        this.endX = x;
+        this.endY = y;
         this.layer = layer;
         hasSelection = false;
     }
@@ -50,6 +54,7 @@ public class Selection {
             for (int dx = 0; dx < width; dx++) {
                 int x = startX + dx;
                 int y = startY + dy;
+                // getBlock() для text-блоков возвращает актуальную строку с "|texts"
                 String block = world.getBlock(layer, x, y);
                 row.add(block != null ? block : "0");
             }
@@ -58,10 +63,24 @@ public class Selection {
         hasSelection = true;
     }
 
+    /**
+     * Сбрасывает ТОЛЬКО локальное выделение.
+     * Статический буфер обмена НЕ трогаем — он общий для всех карт.
+     */
     public void clear() {
         blocks.clear();
         hasSelection = false;
+        startX = startY = endX = endY = 0;
+        layer = 0;
+    }
+
+    /**
+     * Полный сброс статического буфера обмена.
+     * Вызывать, когда нужно гарантированно очистить всё (например, D-деселект).
+     */
+    public static void resetClipboard() {
         clipboardBlocks = new ArrayList<>();
+        clipboardHasData = false;
     }
 
     // ============================================================
@@ -70,7 +89,6 @@ public class Selection {
     public void copyToClipboard() {
         if (!hasSelection || blocks.isEmpty()) return;
 
-        // Глубокая копия, чтобы данные не зависели от этого экземпляра
         clipboardBlocks = new ArrayList<>();
         for (List<String> row : blocks) {
             clipboardBlocks.add(new ArrayList<>(row));
@@ -81,10 +99,8 @@ public class Selection {
     public void cut(World world, int layer) {
         if (!hasSelection) return;
 
-        // Сначала копируем в буфер
         copyToClipboard();
 
-        // Потом удаляем с карты
         for (int dy = 0; dy < blocks.size(); dy++) {
             for (int dx = 0; dx < blocks.get(dy).size(); dx++) {
                 int x = startX + dx;
@@ -130,34 +146,28 @@ public class Selection {
                 int y = mouseY + dy;
                 if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
                     String block = clipboardBlocks.get(dy).get(dx);
-                    if (!block.equals("0")) {
+                    if (block != null && !block.equals("0")) {
                         world.setBlock(targetLayer, x, y, block);
                     }
                 }
             }
         }
 
-        // Восстанавливаем сигналы
+        // Синхронизация сигналов
         for (int dy = 0; dy < height; dy++) {
             for (int dx = 0; dx < width; dx++) {
                 int x = mouseX + dx;
                 int y = mouseY + dy;
                 if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
-                    String block = world.getBlock(targetLayer, x, y);
-                    if (block != null && !block.equals("0")) {
-                        String[] parts = block.split("_");
-                        if (parts.length > 1 && parts[1].length() == 2) {
-                            char state = parts[1].charAt(0);
-                            world.setSignal(targetLayer, x, y, state == 't');
-                        }
-                    }
+                    boolean state = world.blockStates[targetLayer][y][x];
+                    world.setSignal(targetLayer, x, y, state);
                 }
             }
         }
     }
 
     // ============================================================
-    // ГЕТТЕРЫ ЛОКАЛЬНОГО ВЫДЕЛЕНИЯ
+    // ГЕТТЕРЫ
     // ============================================================
     public boolean hasSelection() { return hasSelection; }
     public int getStartX() { return startX; }
@@ -168,7 +178,6 @@ public class Selection {
     public int getWidth() { return blocks.isEmpty() ? 0 : blocks.get(0).size(); }
     public int getHeight() { return blocks.size(); }
 
-    // ===== Геттеры статического буфера обмена =====
     public static boolean hasClipboard() { return clipboardHasData; }
     public static List<List<String>> getClipboardBlocks() { return clipboardBlocks; }
     public static int getClipboardWidth() {

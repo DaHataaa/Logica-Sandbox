@@ -184,7 +184,7 @@ public class SimulationEngine {
                 if (x+1 < size && worldBlockTypes[layer][y][x+1] != World.TYPE_EMPTY)
                     ns[layer][y][x+1] += delta;
             }
-            // GETTER и PEG не дают прямой forward-вклад здесь
+            // GETTER, PEG, TEXT не дают прямой forward-вклад здесь
         }
     }
 
@@ -305,6 +305,10 @@ public class SimulationEngine {
                 }
                 return false;
             }
+            case World.TYPE_TEXT: {
+                // Как PEG, но строго в пределах одного слоя
+                return value >= 1;
+            }
             default: // ARROW, BRIDGE, GETTER
                 return value > 0;
         }
@@ -336,6 +340,7 @@ public class SimulationEngine {
             }
             // POWER не меняет состояние
             // PEG не даёт forward-вклада
+            // TEXT не даёт forward-вклада (принимает, но не отдаёт)
             // GETTER обрабатывается ниже
         }
 

@@ -48,6 +48,9 @@ public class ColorConfig {
     @SerializedName("power")
     private String power = "#FF6600";
 
+    @SerializedName("text")
+    private String text = "#000000";
+
     public static ColorConfig load(String texpackName) {
         Path path = Config.getDataDir()
                 .resolve("texturepacks")
@@ -67,6 +70,9 @@ public class ColorConfig {
                 }
                 if (config.getAuthor() == null || config.getAuthor().isEmpty()) {
                     config.author = "Unknown";
+                }
+                if (config.text == null || config.text.isEmpty()) {
+                    config.text = "#000000";
                 }
                 return config;
             }
@@ -110,6 +116,7 @@ public class ColorConfig {
     public String getAnd() { return and; }
     public String getXor() { return xor; }
     public String getPower() { return power; }
+    public String getText() { return text; }
 
     public String getColorForBlock(String blockName) {
         switch (blockName) {
@@ -122,6 +129,7 @@ public class ColorConfig {
             case "and": return and;
             case "xor": return xor;
             case "power": return power;
+            case "text": return text;
             default: return not;
         }
     }

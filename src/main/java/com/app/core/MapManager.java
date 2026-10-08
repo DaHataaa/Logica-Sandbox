@@ -41,6 +41,15 @@ public class MapManager {
                             line.append("0");
                         } else if (t == World.TYPE_POWER) {
                             line.append("power");
+                        } else if (t == World.TYPE_TEXT) {
+                            char s = world.blockStates[layer][y][x] ? 't' : 'f';
+                            String texts = world.blockTexts[layer][y][x];
+                            if (texts == null || texts.isEmpty()) {
+                                texts = World.DEFAULT_TEXT_TRUE + "|" + World.DEFAULT_TEXT_FALSE;
+                            }
+                            // пробел → _ (экранирование, чтобы split(" ") не сломал)
+                            texts = texts.replace(' ', '_');
+                            line.append("text_").append(s).append("f|").append(texts);
                         } else {
                             char s = world.blockStates[layer][y][x] ? 't' : 'f';
                             char d = "urdl".charAt(world.blockDirs[layer][y][x] & 3);
@@ -122,6 +131,7 @@ public class MapManager {
                 }
 
                 if (readingData && size > 0 && currentLayer >= 0 && currentLayer < layers) {
+                    // Пробелы внутри текстов экранированы как '_', поэтому split(" ") безопасен
                     String[] parts = line.split(" ");
                     for (int x = 0; x < parts.length && x < size; x++) {
                         String block = parts[x];
@@ -137,26 +147,20 @@ public class MapManager {
                 }
             }
 
+            // Сигналы уже восстановлены в setBlock (blockStates/signals).
             for (int l = 0; l < layers; l++) {
                 for (int y = 0; y < size; y++) {
                     for (int x = 0; x < size; x++) {
-                        String block = world.getBlock(l, x, y);
-                        if (block != null && !block.equals("0")) {
-                            String[] parts = block.split("_");
-                            if (parts.length > 1 && parts[1].length() == 2) {
-                                char state = parts[1].charAt(0);
-                                world.setSignal(l, x, y, state == 't');
-                            }
-                        }
+                        int t = world.blockTypes[l][y][x];
+                        if (t == World.TYPE_EMPTY) continue;
+                        boolean state = world.blockStates[l][y][x];
+                        world.setSignal(l, x, y, state);
                     }
                 }
             }
 
             System.out.println("Map loaded successfully: " + file);
             System.out.println("Total blocks loaded: " + blocksLoaded);
-
-            String testBlock = world.getBlock(0, 115, 120);
-            System.out.println("Test block at (0,115,120): " + testBlock);
 
             return true;
 

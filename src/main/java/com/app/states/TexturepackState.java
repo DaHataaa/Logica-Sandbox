@@ -152,16 +152,16 @@ public class TexturepackState implements State {
         String cardBgColor = texpackColors.getBackground();
         String cardSignalOn = texpackColors.getSignalOn();
         String cardPower = texpackColors.getPower();
-        String cardGrid = texpackColors.getGrid(); // Get grid color
+        String cardGrid = texpackColors.getGrid();
 
         VBox card = new VBox(10);
         card.setAlignment(Pos.CENTER);
         card.setStyle(
                 "-fx-background-color: " + cardBgColor + ";" +
                         "-fx-background-radius: 15;" +
-                        "-fx-border-color: " + cardGrid + ";" +       // Add grid color border
-                        "-fx-border-width: 2;" +                        // Set border width
-                        "-fx-border-radius: 15;" +                      // Match border radius to background
+                        "-fx-border-color: " + cardGrid + ";" +
+                        "-fx-border-width: 2;" +
+                        "-fx-border-radius: 15;" +
                         "-fx-padding: 10;" +
                         "-fx-min-width: 580;" +
                         "-fx-max-width: 580;"
@@ -208,7 +208,8 @@ public class TexturepackState implements State {
         row.setAlignment(Pos.CENTER);
         row.setStyle("-fx-padding: 1;");
 
-        String[] blocks = {"arrow", "getter", "bridge", "peg", "power", "not", "or", "and", "xor"};
+        // ← добавлен "text"
+        String[] blocks = {"arrow", "getter", "bridge", "peg", "power", "not", "or", "and", "xor", "text"};
 
         Map<String, Sprite> sprites = SpriteLoader.loadAllSprites(texpackName);
 
@@ -248,14 +249,11 @@ public class TexturepackState implements State {
                     int g = (color >> 8) & 0xFF;
                     int b = color & 0xFF;
 
-                    // Считаем белым если все компоненты > 250 (почти белый)
                     boolean isWhite = (r > 250 && g > 250 && b > 250);
-                    // Считаем чёрным если все компоненты < 30 (почти чёрный)
                     boolean isBlack = (r < 30 && g < 30 && b < 30);
 
                     if (isWhite) {
                         // Белый фон — оставляем background (уже залит)
-                        // ничего не делаем
                     } else if (isBlack) {
                         // Чёрные пиксели — заменяем на цвет блока
                         pw.setArgb(x, y, targetColor);
@@ -313,6 +311,7 @@ public class TexturepackState implements State {
             case "or": return "OR";
             case "and": return "AND";
             case "xor": return "XOR";
+            case "text": return "TXT";   // ← добавлено
             default: return blockName.substring(0, 3).toUpperCase();
         }
     }

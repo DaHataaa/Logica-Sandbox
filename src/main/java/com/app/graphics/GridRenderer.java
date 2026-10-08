@@ -2,12 +2,15 @@ package com.app.graphics;
 
 import com.app.core.Direction;
 import com.app.core.World;
+import javafx.geometry.VPos;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+import javafx.scene.text.TextAlignment;
 
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -33,11 +36,15 @@ public class GridRenderer {
     private Color bgColor;
     private Color signalOnColor;
     private Color gridColor;
+    private Color textColor;
     private final Map<String, Color> blockColorCache = new HashMap<>();
 
     // КЭШ ШРИФТА
     private Font simplifiedFont;
     private int simplifiedFontSize = -1;
+
+    private Font textFont;
+    private double textFontSize = -1;
 
     // id → имя (совпадает с TYPE_* в World)
     private static final String[] TYPE_NAMES = {
@@ -50,7 +57,8 @@ public class GridRenderer {
             "bridge",  // TYPE_BRIDGE
             "power",   // TYPE_POWER
             "getter",  // TYPE_GETTER
-            "peg"      // TYPE_PEG
+            "peg",     // TYPE_PEG
+            "text"     // TYPE_TEXT
     };
 
     // dirIndex (0=u,1=r,2=d,3=l) → Direction
@@ -91,10 +99,15 @@ public class GridRenderer {
         this.bgColor = Color.web(colors.getBackground());
         this.signalOnColor = Color.web(colors.getSignalOn());
         this.gridColor = Color.web(colors.getGrid());
+        this.textColor = Color.web(colors.getText());
         this.blockColorCache.clear();
+
+        this.textFont = null;
+        this.textFontSize = -1;
+        this.simplifiedFont = null;
+        this.simplifiedFontSize = -1;
     }
 
-    /** Вызывать при смене текстурпака, чтобы не держать старые int[] в IdentityHashMap. */
     public void clearSpriteArrayCache() {
         spriteArrayImageCache.clear();
     }
@@ -114,6 +127,14 @@ public class GridRenderer {
             simplifiedFontSize = size;
         }
         return simplifiedFont;
+    }
+
+    private Font getTextFont(double size) {
+        if (textFont == null || Math.abs(textFontSize - size) > 0.01) {
+            textFont = Font.font("Monospaced", FontWeight.BOLD, size);
+            textFontSize = size;
+        }
+        return textFont;
     }
 
     private String getCacheKey(Direction dir, boolean signalOn) {
@@ -176,12 +197,14 @@ public class GridRenderer {
         gc.setFill(bgColor);
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
 
+        // ===== ПРОХОД 1: фоны + спрайты =====
         for (int y = startY; y < endY; y++) {
             for (int x = startX; x < endX; x++) {
                 int typeId = world.blockTypes[currentLayer][y][x];
                 int dirIdx = world.blockDirs[currentLayer][y][x];
                 boolean hasSignal = world.getSignal(currentLayer, x, y);
 
+                // Каждая клетка — от своей world-координаты через worldToScreenX
                 double screenX = camera.worldToScreenX(x * baseCellSize);
                 double screenY = camera.worldToScreenY(y * baseCellSize);
                 int ix = (int) Math.round(screenX);
@@ -192,12 +215,10 @@ public class GridRenderer {
                     gc.fillRect(ix, iy, cellScreenSize, cellScreenSize);
                 }
 
-                // 2. СПРАЙТ ПОВЕРХ
                 if (typeId != World.TYPE_EMPTY) {
                     String blockName = (typeId >= 0 && typeId < TYPE_NAMES.length)
                             ? TYPE_NAMES[typeId] : "0";
 
-                    // Спрайт всегда красится в цвет блока; активность видна по фону
                     Direction spriteDir = DIR_BY_INDEX[dirIdx & 3];
                     boolean spriteSignal = false;
 
@@ -218,7 +239,7 @@ public class GridRenderer {
             }
         }
 
-        // РИСУЕМ СЕТКУ ИЛИ РАМКУ ПОЛЯ
+        // ===== ПРОХОД 2: сетка =====
         double firstCellScreenX = camera.worldToScreenX(startX * baseCellSize);
         double lastCellScreenX = camera.worldToScreenX(endX * baseCellSize);
         double firstCellScreenY = camera.worldToScreenY(startY * baseCellSize);
@@ -250,13 +271,74 @@ public class GridRenderer {
                     lastCellScreenX - firstCellScreenX,
                     lastCellScreenY - firstCellScreenY);
         }
+
+        // ===== ПРОХОД 3: текст поверх всего =====
+        renderTextBlocks(currentLayer, startX, startY, endX, endY, cellScreenSize);
+    }
+
+    private void renderTextBlocks(int layer, int startX, int startY, int endX, int endY, int cellScreenSize) {
+        if (cellScreenSize < 6) return;
+
+        int textStartX = Math.max(0, startX - 16);
+        int textStartY = Math.max(0, startY);
+        int textEndX = Math.min(worldSizeCells, endX + 16);
+        int textEndY = Math.min(worldSizeCells, endY);
+
+        double fontSize = Math.max(6.0, cellScreenSize / 1);
+        gc.setFont(getTextFont(fontSize));
+        gc.setFill(textColor);
+
+        gc.setTextAlign(TextAlignment.CENTER);
+        gc.setTextBaseline(VPos.CENTER);
+
+        for (int y = textStartY; y < textEndY; y++) {
+            for (int x = textStartX; x < textEndX; x++) {
+                if (world.blockTypes[layer][y][x] != World.TYPE_TEXT) continue;
+
+                String raw = world.blockTexts[layer][y][x];
+                if (raw == null || raw.isEmpty()) continue;
+
+                boolean signalOn = world.getSignal(layer, x, y);
+                String text = extractText(raw, signalOn);
+                if (text == null || text.isEmpty()) continue;
+
+                int len = text.length();
+
+                // Каждый символ — от своей world-координаты (без накопления)
+                double cellScreenY = camera.worldToScreenY(y * baseCellSize);
+
+                for (int c = 0; c < len; c++) {
+                    char ch = text.charAt(c);
+
+                    // Точная screen-координата клетки (x + c)
+                    double cellScreenX = camera.worldToScreenX((x + c) * baseCellSize);
+
+                    double centerX = cellScreenX + cellScreenSize * 0.5;
+                    double centerY = cellScreenY + cellScreenSize * 0.5;
+
+                    gc.fillText(String.valueOf(ch), centerX, centerY);
+                }
+            }
+        }
+
+        gc.setTextAlign(TextAlignment.LEFT);
+        gc.setTextBaseline(VPos.BASELINE);
+    }
+
+    private String extractText(String raw, boolean signalOn) {
+        int pipe = raw.indexOf('|');
+        if (pipe < 0) return raw;
+        if (signalOn) {
+            return raw.substring(0, pipe);
+        } else {
+            return raw.substring(pipe + 1);
+        }
     }
 
     public Canvas getCanvas() {
         return canvas;
     }
 
-    /** Кэширует WritableImage по самому массиву int[], чтобы не создавать его каждый кадр. */
     public void drawSprite(GraphicsContext gc, int[] sprite, int size, int x, int y) {
         if (sprite == null || size <= 0) return;
 
