@@ -30,7 +30,7 @@ public class TextEditorDialog {
         }
     }
 
-    private static final int MAX_LEN = 64;
+    private static final int MAX_LEN = 256;
 
     /**
      * Открывает модальный диалог редактирования текстового блока.
@@ -59,11 +59,11 @@ public class TextEditorDialog {
         TextField falseField = createField(colors, currentFalse);
 
         // ===== Подписи =====
-        Label trueLabel = new Label("TRUE:");
+        Label trueLabel = new Label("TRUE: ");
         trueLabel.setStyle("-fx-font-family: 'Monospaced'; -fx-font-size: 16px; -fx-font-weight: bold;");
         trueLabel.setTextFill(Color.web(colors.getGrid()));
 
-        Label falseLabel = new Label("FALS:");
+        Label falseLabel = new Label("FALSE:");
         falseLabel.setStyle("-fx-font-family: 'Monospaced'; -fx-font-size: 16px; -fx-font-weight: bold;");
         falseLabel.setTextFill(Color.web(colors.getGrid()));
 

@@ -314,7 +314,7 @@ public class GridRenderer {
                     double cellScreenX = camera.worldToScreenX((x + c) * baseCellSize);
 
                     double centerX = cellScreenX + cellScreenSize * 0.5;
-                    double centerY = cellScreenY + cellScreenSize * 0.5;
+                    double centerY = cellScreenY + cellScreenSize * 0.52;
 
                     gc.fillText(String.valueOf(ch), centerX, centerY);
                 }

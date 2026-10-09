@@ -351,7 +351,7 @@ public class MainState implements State {
             world.setBlockTexts(layer, cellX, cellY, result.trueText, result.falseText);
             requestRender();
             System.out.println("Text block updated at (" + cellX + ", " + cellY
-                    + "): TRUE=\"" + result.trueText + "\" FALS=\"" + result.falseText + "\"");
+                    + "): TRUE=\"" + result.trueText + "\" FALSE=\"" + result.falseText + "\"");
         }
 
         // Возвращаем фокус на канвас, чтобы стрелки/F работали

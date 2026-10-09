@@ -37,7 +37,7 @@ public class World {
     };
 
     public static final String DEFAULT_TEXT_TRUE = "TRUE";
-    public static final String DEFAULT_TEXT_FALSE = "FALS";
+    public static final String DEFAULT_TEXT_FALSE = "FALSE";
 
     public World() {
         Config config = Config.getInstance();
