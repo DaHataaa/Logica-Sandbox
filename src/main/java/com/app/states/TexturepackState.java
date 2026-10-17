@@ -4,6 +4,7 @@ import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
 import com.app.graphics.SpriteLoader;
 import com.app.graphics.Sprite;
+import com.app.graphics.MenuBackgroundRenderer;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ScrollPane;
@@ -11,6 +12,7 @@ import javafx.scene.input.*;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
 import javafx.scene.canvas.Canvas;
@@ -38,6 +40,8 @@ public class TexturepackState implements State {
     private List<VBox> cards = new ArrayList<>();
     private List<Button> selectButtons = new ArrayList<>();
     private List<String> cardNames = new ArrayList<>();
+
+    private Canvas backgroundCanvas;
 
     public TexturepackState() {
         spriteManager = SpriteManager.getInstance();
@@ -68,11 +72,20 @@ public class TexturepackState implements State {
         scrollPane = new ScrollPane(texpacksContainer);
         scrollPane.getStyleClass().add("map-scroll-pane");
         scrollPane.setFitToWidth(true);
-        scrollPane.setPrefWidth(650);
+        scrollPane.setPrefWidth(900);
         scrollPane.setPrefHeight(850);
 
         centerPanel.getChildren().addAll(title, scrollPane, backBtn);
-        root.setCenter(centerPanel);
+
+        backgroundCanvas = new Canvas();
+        StackPane stack = new StackPane(backgroundCanvas, centerPanel);
+        backgroundCanvas.widthProperty().bind(stack.widthProperty());
+        backgroundCanvas.heightProperty().bind(stack.heightProperty());
+        backgroundCanvas.widthProperty().addListener(o ->
+                MenuBackgroundRenderer.draw(backgroundCanvas, currentColors));
+        backgroundCanvas.heightProperty().addListener(o ->
+                MenuBackgroundRenderer.draw(backgroundCanvas, currentColors));
+        root.setCenter(stack);
 
         createTexpacksList();
     }
@@ -120,13 +133,35 @@ public class TexturepackState implements State {
 
             if (cardName.equals(newActiveTexpack)) {
                 btn.setText("✓ ACTIVE");
-                btn.setStyle("-fx-background-color: " + texpackColors.getPower() + "; -fx-text-fill: white; -fx-font-weight: bold;");
+                btn.setStyle("-fx-background-color: " + texpackColors.getPower()
+                        + "; -fx-text-fill: white; -fx-font-weight: bold;");
                 btn.getStyleClass().add("button");
             } else {
                 btn.setText("SELECT");
                 btn.setStyle("");
                 btn.getStyleClass().add("button");
             }
+        }
+
+        for (int i = 0; i < cards.size(); i++) {
+            VBox card = cards.get(i);
+            String cardName = cardNames.get(i);
+            ColorConfig texpackColors = ColorConfig.load(cardName);
+
+            String borderColor = cardName.equals(newActiveTexpack)
+                    ? texpackColors.getPower()
+                    : texpackColors.getGrid();
+
+            card.setStyle(
+                    "-fx-background-color: " + texpackColors.getBackground() + ";" +
+                            "-fx-background-radius: 15;" +
+                            "-fx-border-color: " + borderColor + ";" +
+                            "-fx-border-width: 2;" +
+                            "-fx-border-radius: 15;" +
+                            "-fx-padding: 10;" +
+                            "-fx-min-width: 650;" +
+                            "-fx-max-width: 650;"
+            );
         }
     }
 
@@ -156,15 +191,18 @@ public class TexturepackState implements State {
 
         VBox card = new VBox(10);
         card.setAlignment(Pos.CENTER);
+
+        String borderColor = currentTexpack.equals(texpackName) ? cardPower : cardGrid;
+
         card.setStyle(
                 "-fx-background-color: " + cardBgColor + ";" +
                         "-fx-background-radius: 15;" +
-                        "-fx-border-color: " + cardGrid + ";" +
+                        "-fx-border-color: " + borderColor + ";" +
                         "-fx-border-width: 2;" +
                         "-fx-border-radius: 15;" +
                         "-fx-padding: 10;" +
-                        "-fx-min-width: 580;" +
-                        "-fx-max-width: 580;"
+                        "-fx-min-width: 650;" +
+                        "-fx-max-width: 650;"
         );
 
         Text nameLabel = new Text(texpackName.toUpperCase());
@@ -188,7 +226,8 @@ public class TexturepackState implements State {
         Button selectBtn = new Button(currentTexpack.equals(texpackName) ? "✓ ACTIVE" : "SELECT");
         selectBtn.getStyleClass().add("button");
         if (currentTexpack.equals(texpackName)) {
-            selectBtn.setStyle("-fx-background-color: " + cardPower + "; -fx-text-fill: white; -fx-font-weight: bold;");
+            selectBtn.setStyle("-fx-background-color: " + cardPower
+                    + "; -fx-text-fill: white; -fx-font-weight: bold;");
         }
 
         final String finalTexpackName = texpackName;
@@ -208,7 +247,6 @@ public class TexturepackState implements State {
         row.setAlignment(Pos.CENTER);
         row.setStyle("-fx-padding: 1;");
 
-        // ← добавлен "text"
         String[] blocks = {"arrow", "getter", "bridge", "peg", "power", "not", "or", "and", "xor", "text"};
 
         Map<String, Sprite> sprites = SpriteLoader.loadAllSprites(texpackName);
@@ -227,7 +265,6 @@ public class TexturepackState implements State {
 
         Sprite sprite = sprites.get(blockName);
 
-        // Заливаем фон цветом background
         gc.setFill(Color.web(texpackColors.getBackground()));
         gc.fillRect(0, 0, size, size + 20);
 
@@ -253,12 +290,9 @@ public class TexturepackState implements State {
                     boolean isBlack = (r < 30 && g < 30 && b < 30);
 
                     if (isWhite) {
-                        // Белый фон — оставляем background (уже залит)
                     } else if (isBlack) {
-                        // Чёрные пиксели — заменяем на цвет блока
                         pw.setArgb(x, y, targetColor);
                     } else {
-                        // Цветные пиксели — рисуем как есть
                         pw.setArgb(x, y, color);
                     }
                 }
@@ -311,7 +345,7 @@ public class TexturepackState implements State {
             case "or": return "OR";
             case "and": return "AND";
             case "xor": return "XOR";
-            case "text": return "TXT";   // ← добавлено
+            case "text": return "TXT";
             default: return blockName.substring(0, 3).toUpperCase();
         }
     }
@@ -327,6 +361,10 @@ public class TexturepackState implements State {
         root.setStyle("-fx-background-color: " + currentBackground + ";");
 
         updateActiveButton(texpackName);
+
+        if (backgroundCanvas != null) {
+            MenuBackgroundRenderer.draw(backgroundCanvas, currentColors);
+        }
 
         com.app.StyleManager.generateCSS();
 

@@ -15,10 +15,12 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
-
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import com.app.graphics.MenuBackgroundRenderer;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.layout.StackPane;
 
 public class MenuState implements State {
     private BorderPane root;
@@ -83,7 +85,14 @@ public class MenuState implements State {
                 title, mapsText, scrollPane,
                 newMapBtn, texpacksBtn, helpBtn
         );
-        root.setCenter(centerPanel);
+        // canvas-фон
+        Canvas bgCanvas = new Canvas();
+        StackPane stack = new StackPane(bgCanvas, centerPanel);
+        bgCanvas.widthProperty().bind(stack.widthProperty());
+        bgCanvas.heightProperty().bind(stack.heightProperty());
+        bgCanvas.widthProperty().addListener(o -> MenuBackgroundRenderer.draw(bgCanvas, colors));
+        bgCanvas.heightProperty().addListener(o -> MenuBackgroundRenderer.draw(bgCanvas, colors));
+        root.setCenter(stack);
 
         refreshMapsList();
     }

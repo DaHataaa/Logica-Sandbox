@@ -470,6 +470,8 @@ public class MainState implements State {
         int cellY = (int) Math.floor(worldY / baseCellSize);
 
         if (cellX >= 0 && cellX < world.getSize() && cellY >= 0 && cellY < world.getSize()) {
+            if (world.blockTypes[world.getCurrentLayer()][cellY][cellX] == World.TYPE_TEXT) return;
+
             BlockType type = palette.getSelectedBlock();
             Direction dir = palette.getCurrentDirection();
 
@@ -957,7 +959,13 @@ public class MainState implements State {
             }
         } else if (event.getButton() == MouseButton.PRIMARY) {
             if (!overPalette && !selecting && !deleteMode) {
-                placeBlock(event.getSceneX(), event.getSceneY());
+                int[] cell = getCellUnderSceneCoords(event.getSceneX(), event.getSceneY());
+                if (isValidCell(cell[0], cell[1])
+                        && world.blockTypes[world.getCurrentLayer()][cell[1]][cell[0]] == World.TYPE_TEXT) {
+                    openTextEditor(cell[0], cell[1]);
+                } else {
+                    placeBlock(event.getSceneX(), event.getSceneY());
+                }
             }
         }
     }
