@@ -1,5 +1,5 @@
-BLOCK PLACING:
- 1-9          - Block choosing
+BLOCK PLACING
+ 1-0          - Block choosing
  WASD         - Block direction
  LMC          - Place chosen block
  R            - Delete block
@@ -10,7 +10,7 @@ NAVIGATION
  T            - Layer Up
  G            - Layer Down
 
-SELECTING:
+SELECTING
  E+drag       - Select area
  C            - Copy selected area
  V            - Paste selected area
@@ -18,7 +18,7 @@ SELECTING:
  R            - Clear selected area
  D            - Deselect
 
-KEYBOARD ONLY:
+KEYBOARD ONLY
  Arrows       - Mooving the cursor
  -/+ keys     - Zoom
  F            - Place chosen blook
@@ -26,3 +26,11 @@ KEYBOARD ONLY:
 MAP SAVING
  Ctrl+S       - Save current map if exists
  Ctrl+Shift+S - Save current map as a new one
+
+OTHER
+ F/LMC        - Edit Text block
+
+
+TIPS:
+ - Type "-1" or "max" in SIM. Speed field to disable the TPS limit
+ - There are no tips else

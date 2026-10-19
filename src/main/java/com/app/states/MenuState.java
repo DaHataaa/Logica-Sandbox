@@ -2,6 +2,7 @@ package com.app.states;
 
 import com.app.Config;
 import com.app.core.MapManager;
+import com.app.core.World;
 import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
 import com.app.ui.HelpDialog;
@@ -182,6 +183,7 @@ public class MenuState implements State {
                 if (MapManager.mapExists(name)) {
                     showError("Map already exists!");
                 } else {
+                    MapManager.saveMap(name, new World());
                     nextState = new MainState(name);
                 }
             }
