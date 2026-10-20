@@ -15,7 +15,6 @@ import java.nio.file.Paths;
 public class Config {
     private static Config instance;
 
-    // ===== Базовая директория и data =====
     private static Path baseDir;
     private static Path dataDir;
 
@@ -64,6 +63,22 @@ public class Config {
     @SerializedName("current_texturepack")
     private String currentTexturepack = "Classic";
 
+    // ===== AUDIO =====
+    @SerializedName("master_volume")
+    private int masterVolume = 100;
+
+    @SerializedName("ui_click_volume")
+    private int uiClickVolume = 100;
+
+    @SerializedName("placement_volume")
+    private int placementVolume = 100;
+
+    @SerializedName("remove_volume")
+    private int removeVolume = 100;
+
+    @SerializedName("block_activation_volume")
+    private int blockActivationVolume = 80;
+
     private Config() {}
 
     public static synchronized Config getInstance() {
@@ -74,12 +89,6 @@ public class Config {
         return instance;
     }
 
-    // ===== Определение базовой папки =====
-    /**
-     * Возвращает папку, относительно которой лежит data/.
-     * - Запуск из IDE: корень проекта (там где pom.xml)
-     * - Запуск из jar: папка, где лежит jar
-     */
     public static Path getBaseDir() {
         if (baseDir == null) {
             baseDir = resolveBaseDir();
@@ -87,9 +96,6 @@ public class Config {
         return baseDir;
     }
 
-    /**
-     * Возвращает путь к папке data (baseDir/data).
-     */
     public static Path getDataDir() {
         if (dataDir == null) {
             dataDir = getBaseDir().resolve("data");
@@ -103,10 +109,8 @@ public class Config {
                     .getCodeSource().getLocation().toURI());
 
             if (Files.isRegularFile(loc)) {
-                // Запуск из jar → папка рядом с jar
                 return loc.getParent();
             } else {
-                // Запуск из IDE → target/classes, поднимаемся до корня проекта
                 Path p = loc;
                 while (p != null) {
                     if (Files.exists(p.resolve("pom.xml"))
@@ -116,7 +120,6 @@ public class Config {
                     }
                     p = p.getParent();
                 }
-                // Fallback — рабочая директория
                 return Paths.get(".").toAbsolutePath().normalize();
             }
         } catch (Exception e) {
@@ -125,7 +128,6 @@ public class Config {
         }
     }
 
-    // ===== Загрузка / сохранение =====
     public void load() {
         File file = getDataDir().resolve("config.json").toFile();
         if (file.exists()) {
@@ -144,6 +146,13 @@ public class Config {
                     this.worldSize = loaded.worldSize;
                     this.layers = loaded.layers;
                     this.currentTexturepack = loaded.currentTexturepack;
+
+                    // AUDIO
+                    this.masterVolume = loaded.masterVolume;
+                    this.uiClickVolume = loaded.uiClickVolume;
+                    this.placementVolume = loaded.placementVolume;
+                    this.removeVolume = loaded.removeVolume;
+                    this.blockActivationVolume = loaded.blockActivationVolume;
                 }
             } catch (IOException e) {
                 System.err.println("Failed to load config, using defaults: " + e.getMessage());
@@ -180,10 +189,28 @@ public class Config {
     public int getLayers() { return layers; }
     public String getCurrentTexturepack() { return currentTexturepack; }
 
+    public int getMasterVolume() { return masterVolume; }
+    public int getUiClickVolume() { return uiClickVolume; }
+    public int getPlacementVolume() { return placementVolume; }
+    public int getRemoveVolume() { return removeVolume; }
+    public int getBlockActivationVolume() { return blockActivationVolume; }
+
     // Setters
     public void setCurrentTexturepack(String currentTexturepack) { this.currentTexturepack = currentTexturepack; }
     public void setSimulationSpeed(int simulationSpeed) { this.simulationSpeed = simulationSpeed; }
     public void setWindowWidth(int windowWidth) { this.windowWidth = windowWidth; }
     public void setWindowHeight(int windowHeight) { this.windowHeight = windowHeight; }
     public void setFullscreen(boolean fullscreen) { this.fullscreen = fullscreen; }
+
+    public void setUndoDepth(int undoDepth) { this.undoDepth = undoDepth; }
+    public void setCellSizeMin(int cellSizeMin) { this.cellSizeMin = cellSizeMin; }
+    public void setCellSizeMax(int cellSizeMax) { this.cellSizeMax = cellSizeMax; }
+    public void setWorldSize(int worldSize) { this.worldSize = worldSize; }
+    public void setLayers(int layers) { this.layers = layers; }
+
+    public void setMasterVolume(int masterVolume) { this.masterVolume = masterVolume; }
+    public void setUiClickVolume(int uiClickVolume) { this.uiClickVolume = uiClickVolume; }
+    public void setPlacementVolume(int placementVolume) { this.placementVolume = placementVolume; }
+    public void setRemoveVolume(int removeVolume) { this.removeVolume = removeVolume; }
+    public void setBlockActivationVolume(int blockActivationVolume) { this.blockActivationVolume = blockActivationVolume; }
 }

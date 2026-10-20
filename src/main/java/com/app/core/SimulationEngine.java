@@ -11,19 +11,16 @@ public class SimulationEngine {
     private final int layers;
     private Runnable onTickComplete;
 
-    // ===== Кэш ссылок на массивы World =====
     private final int[][][] worldBlockTypes;
     private final int[][][] worldBlockDirs;
     private final boolean[][][] worldBlockStates;
     private final boolean[][][] worldSignals;
 
-    // ===== Аккумулятор входов каждой клетки =====
     private final int[][][] ns;
 
     private static final int[] DX = {0, 1, 0, -1};
     private static final int[] DY = {-1, 0, 1, 0};
 
-    // ===== Упаковка (layer, x, y) в int. Требует size ≤ 256, layers ≤ 255. =====
     private static int pack(int layer, int x, int y) {
         return (layer << 16) | (y << 8) | x;
     }
@@ -31,7 +28,6 @@ public class SimulationEngine {
     private static int unpackY(int p) { return (p >>> 8) & 0xFF; }
     private static int unpackX(int p) { return p & 0xFF; }
 
-    // ===== Event-driven: dirty-наборы =====
     private int[] dirty;
     private int dirtyCount = 0;
     private boolean[][][] inDirty;
@@ -43,12 +39,10 @@ public class SimulationEngine {
     private int[] pendingChanges;
     private int pendingChangesCount = 0;
 
-    // ===== Активные клетки (для rebuild) =====
     private int[] activeCells;
     private int activeCellsCount = 0;
     private volatile boolean activeCellsDirty = true;
 
-    // ===== Скорость / потоки / TPS =====
     private final AtomicInteger currentSpeed = new AtomicInteger(60);
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
     private final AtomicBoolean isPaused = new AtomicBoolean(false);
@@ -97,9 +91,6 @@ public class SimulationEngine {
         activeCellsDirty = true;
     }
 
-    // ================================================================
-    // REBUILD: полный пересчёт ns из текущих signals
-    // ================================================================
     private void rebuild() {
         int n = 0;
         for (int layer = 0; layer < layers; layer++) {
@@ -115,7 +106,6 @@ public class SimulationEngine {
         }
         activeCellsCount = n;
 
-        // Полная очистка
         for (int layer = 0; layer < layers; layer++) {
             for (int y = 0; y < size; y++) {
                 Arrays.fill(ns[layer][y], 0);
@@ -127,7 +117,6 @@ public class SimulationEngine {
         nextDirtyCount = 0;
         pendingChangesCount = 0;
 
-        // Пересчёт ns со всех активных
         for (int i = 0; i < n; i++) {
             int p = activeCells[i];
             int layer = unpackLayer(p);
@@ -139,7 +128,6 @@ public class SimulationEngine {
             }
         }
 
-        // Все активные — dirty на первый тик
         for (int i = 0; i < n; i++) {
             int p = activeCells[i];
             int layer = unpackLayer(p);
@@ -153,7 +141,6 @@ public class SimulationEngine {
         activeCellsDirty = false;
     }
 
-    // Прямой вклад в ns (без dirty) — для rebuild
     private void contributeForwardDirect(int layer, int x, int y, int delta) {
         int type = worldBlockTypes[layer][y][x];
         int dirIndex = worldBlockDirs[layer][y][x];
@@ -184,34 +171,28 @@ public class SimulationEngine {
                 if (x+1 < size && worldBlockTypes[layer][y][x+1] != World.TYPE_EMPTY)
                     ns[layer][y][x+1] += delta;
             }
-            // GETTER, PEG, TEXT не дают прямой forward-вклад здесь
         }
     }
 
-    // GETTER за нашей спиной: пишем и в ns[G], и в forward-цель G
     private void contributeGettersDirect(int layer, int x, int y, int delta) {
-        // GETTER сзади сверху (dir UP читает нас снизу)
         if (y > 0
                 && worldBlockTypes[layer][y-1][x] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y-1][x] == 0) {
-            ns[layer][y-1][x] += delta;                 // ns GETTER'а
-            if (y-2 >= 0) ns[layer][y-2][x] += delta;   // forward GETTER'а
+            ns[layer][y-1][x] += delta;
+            if (y-2 >= 0) ns[layer][y-2][x] += delta;
         }
-        // GETTER справа (dir RIGHT читает нас слева)
         if (x+1 < size
                 && worldBlockTypes[layer][y][x+1] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y][x+1] == 1) {
             ns[layer][y][x+1] += delta;
             if (x+2 < size) ns[layer][y][x+2] += delta;
         }
-        // GETTER снизу (dir DOWN читает нас сверху)
         if (y+1 < size
                 && worldBlockTypes[layer][y+1][x] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y+1][x] == 2) {
             ns[layer][y+1][x] += delta;
             if (y+2 < size) ns[layer][y+2][x] += delta;
         }
-        // GETTER слева (dir LEFT читает нас справа)
         if (x > 0
                 && worldBlockTypes[layer][y][x-1] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y][x-1] == 3) {
@@ -220,20 +201,15 @@ public class SimulationEngine {
         }
     }
 
-    // ================================================================
-    // ОСНОВНОЙ ТИК
-    // ================================================================
     private void simulateTick() {
         if (activeCellsDirty) {
             rebuild();
         }
 
-        // Если нечего обрабатывать — пустой тик
         if (dirtyCount == 0) {
             return;
         }
 
-        // --- Шаг 1: вычислить новое состояние для dirty-клеток ---
         pendingChangesCount = 0;
         for (int i = 0; i < dirtyCount; i++) {
             int p = dirty[i];
@@ -250,7 +226,6 @@ public class SimulationEngine {
         }
         dirtyCount = 0;
 
-        // --- Шаг 2: применить изменения и распространить ---
         for (int i = 0; i < pendingChangesCount; i++) {
             int p = pendingChanges[i];
             int layer = unpackLayer(p);
@@ -261,12 +236,17 @@ public class SimulationEngine {
             worldSignals[layer][y][x] = newState;
             worldBlockStates[layer][y][x] = newState;
 
+            // ===== ЗВУК: только на фронте false→true =====
+            if (newState) {
+                com.app.audio.AudioManager.getInstance()
+                        .playSignal(worldBlockTypes[layer][y][x]);
+            }
+
             int delta = newState ? +1 : -1;
             propagateChange(layer, x, y, delta);
         }
         pendingChangesCount = 0;
 
-        // --- Свап dirty / nextDirty ---
         int[] tmp = dirty;
         dirty = nextDirty;
         nextDirty = tmp;
@@ -279,9 +259,6 @@ public class SimulationEngine {
         nextDirtyCount = 0;
     }
 
-    // ================================================================
-    // Вычисление нового состояния из ns (и спец-случаев)
-    // ================================================================
     private boolean computeNextState(int layer, int x, int y) {
         int type = worldBlockTypes[layer][y][x];
         if (type == World.TYPE_EMPTY) return false;
@@ -306,22 +283,17 @@ public class SimulationEngine {
                 return false;
             }
             case World.TYPE_TEXT: {
-                // Как PEG, но строго в пределах одного слоя
                 return value >= 1;
             }
-            default: // ARROW, BRIDGE, GETTER
+            default:
                 return value > 0;
         }
     }
 
-    // ================================================================
-    // Распространение изменения состояния
-    // ================================================================
     private void propagateChange(int layer, int x, int y, int delta) {
         int type = worldBlockTypes[layer][y][x];
         int dirIndex = worldBlockDirs[layer][y][x];
 
-        // === Forward-вклад от этой клетки (кроме GETTER — он в блоке ниже) ===
         switch (type) {
             case World.TYPE_ARROW, World.TYPE_AND, World.TYPE_OR,
                  World.TYPE_XOR, World.TYPE_NOT -> {
@@ -338,35 +310,26 @@ public class SimulationEngine {
                     applyDelta(layer, nx, ny, delta);
                 }
             }
-            // POWER не меняет состояние
-            // PEG не даёт forward-вклада
-            // TEXT не даёт forward-вклада (принимает, но не отдаёт)
-            // GETTER обрабатывается ниже
         }
 
-        // === GETTER за нашей спиной: транслируем delta напрямую ===
-        // GETTER сзади сверху (dir UP) — читает нас, forward к (x, y-2)
         if (y > 0
                 && worldBlockTypes[layer][y-1][x] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y-1][x] == 0) {
-            applyDelta(layer, x, y-1, delta);           // ns GETTER'а
-            if (y-2 >= 0) applyDelta(layer, x, y-2, delta);  // forward GETTER'а
+            applyDelta(layer, x, y-1, delta);
+            if (y-2 >= 0) applyDelta(layer, x, y-2, delta);
         }
-        // GETTER справа (dir RIGHT) — читает нас, forward к (x+2, y)
         if (x+1 < size
                 && worldBlockTypes[layer][y][x+1] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y][x+1] == 1) {
             applyDelta(layer, x+1, y, delta);
             if (x+2 < size) applyDelta(layer, x+2, y, delta);
         }
-        // GETTER снизу (dir DOWN) — читает нас, forward к (x, y+2)
         if (y+1 < size
                 && worldBlockTypes[layer][y+1][x] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y+1][x] == 2) {
             applyDelta(layer, x, y+1, delta);
             if (y+2 < size) applyDelta(layer, x, y+2, delta);
         }
-        // GETTER слева (dir LEFT) — читает нас, forward к (x-2, y)
         if (x > 0
                 && worldBlockTypes[layer][y][x-1] == World.TYPE_GETTER
                 && worldBlockDirs[layer][y][x-1] == 3) {
@@ -375,7 +338,6 @@ public class SimulationEngine {
         }
     }
 
-    // Изменение ns с пометкой dirty и обработкой PEG-кросс-слоя
     private void applyDelta(int layer, int x, int y, int delta) {
         int oldNs = ns[layer][y][x];
         int newNs = oldNs + delta;
@@ -383,7 +345,6 @@ public class SimulationEngine {
 
         addToNextDirty(layer, x, y);
 
-        // PEG: если ns пересёк порог 0↔1 — будим PEG в других слоях
         if (worldBlockTypes[layer][y][x] == World.TYPE_PEG) {
             boolean wasPos = oldNs >= 1;
             boolean isPos  = newNs >= 1;
@@ -403,9 +364,6 @@ public class SimulationEngine {
         nextDirty[nextDirtyCount++] = pack(layer, x, y);
     }
 
-    // ================================================================
-    // Поток симуляции
-    // ================================================================
     public void setOnTickComplete(Runnable callback) { this.onTickComplete = callback; }
 
     public void start() {
@@ -491,7 +449,6 @@ public class SimulationEngine {
                         continue;
                     }
 
-                    // MAX-режим
                     if (intervalNanos < 0) {
                         simulateTick();
                         tickCounter.incrementAndGet();
@@ -539,9 +496,6 @@ public class SimulationEngine {
         }
     }
 
-    // ================================================================
-    // TPS-счётчик
-    // ================================================================
     private void startTpsCounter() {
         if (tpsThreadRunning) return;
         tpsThreadRunning = true;

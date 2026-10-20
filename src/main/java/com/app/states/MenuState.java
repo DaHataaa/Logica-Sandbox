@@ -34,7 +34,6 @@ public class MenuState implements State {
     private String backgroundColor;
 
     public MenuState() {
-        // Получаем цвета из SpriteManager
         this.colors = SpriteManager.getInstance().getColors();
         this.backgroundColor = colors.getBackground();
 
@@ -46,7 +45,6 @@ public class MenuState implements State {
         centerPanel.setStyle("-fx-padding: 20;");
         centerPanel.setMaxWidth(800);
 
-        // Заголовок
         Text title = new Text("Logica-Sandbox");
         title.getStyleClass().add("menu-title");
         title.setStyle("-fx-font-size: 64px;");
@@ -56,22 +54,22 @@ public class MenuState implements State {
         mapsText.setStyle("-fx-font-size: 28px;");
         mapsText.setFill(Color.web(colors.getGrid()));
 
-        // Кнопка новой карты
         Button newMapBtn = new Button("+ NEW MAP");
         newMapBtn.getStyleClass().add("button");
         newMapBtn.setOnAction(e -> createNewMap());
 
-        // Кнопка Texturepacks
         Button texpacksBtn = new Button("🎨 TEXTURE PACKS");
         texpacksBtn.getStyleClass().add("button");
         texpacksBtn.setOnAction(e -> openTexpacks());
 
-        // Кнопка HELP
         Button helpBtn = new Button("❓ HELP");
         helpBtn.getStyleClass().add("button");
         helpBtn.setOnAction(e -> HelpDialog.show());
 
-        // Контейнер для списка карт
+        Button settingsBtn = new Button("⚙ SETTINGS");
+        settingsBtn.getStyleClass().add("button");
+        settingsBtn.setOnAction(e -> nextState = new SettingsState());
+
         mapsContainer = new VBox(8);
         mapsContainer.setAlignment(Pos.TOP_CENTER);
 
@@ -81,12 +79,11 @@ public class MenuState implements State {
         scrollPane.setPrefWidth(500);
         scrollPane.setPrefHeight(850);
 
-        // Добавляем все элементы
         centerPanel.getChildren().addAll(
                 title, mapsText, scrollPane,
-                newMapBtn, texpacksBtn, helpBtn
+                newMapBtn, texpacksBtn, helpBtn, settingsBtn
         );
-        // canvas-фон
+
         Canvas bgCanvas = new Canvas();
         StackPane stack = new StackPane(bgCanvas, centerPanel);
         bgCanvas.widthProperty().bind(stack.widthProperty());

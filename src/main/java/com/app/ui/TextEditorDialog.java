@@ -1,5 +1,6 @@
 package com.app.ui;
 
+import com.app.audio.AudioManager;
 import com.app.graphics.ColorConfig;
 import com.app.graphics.SpriteManager;
 import javafx.geometry.Insets;
@@ -19,7 +20,6 @@ import java.util.function.UnaryOperator;
 
 public class TextEditorDialog {
 
-    /** Результат редактирования. */
     public static class Result {
         public final String trueText;
         public final String falseText;
@@ -32,14 +32,6 @@ public class TextEditorDialog {
 
     private static final int MAX_LEN = 256;
 
-    /**
-     * Открывает модальный диалог редактирования текстового блока.
-     *
-     * @param owner       родительское окно (может быть null)
-     * @param currentTrue текущий текст для состояния "true" (может быть null)
-     * @param currentFalse текущий текст для состояния "false" (может быть null)
-     * @return Result или null, если пользователь отменил
-     */
     public static Result show(Stage owner, String currentTrue, String currentFalse) {
         ColorConfig colors = SpriteManager.getInstance().getColors();
 
@@ -54,11 +46,9 @@ public class TextEditorDialog {
         dialog.setTitle("Edit text block");
         dialog.setResizable(false);
 
-        // ===== Поля ввода =====
         TextField trueField = createField(colors, currentTrue);
         TextField falseField = createField(colors, currentFalse);
 
-        // ===== Подписи =====
         Label trueLabel = new Label("TRUE: ");
         trueLabel.setStyle("-fx-font-family: 'Monospaced'; -fx-font-size: 16px; -fx-font-weight: bold;");
         trueLabel.setTextFill(Color.web(colors.getGrid()));
@@ -67,14 +57,12 @@ public class TextEditorDialog {
         falseLabel.setStyle("-fx-font-family: 'Monospaced'; -fx-font-size: 16px; -fx-font-weight: bold;");
         falseLabel.setTextFill(Color.web(colors.getGrid()));
 
-        // ===== Строки =====
         HBox trueRow = new HBox(10, trueLabel, trueField);
         trueRow.setAlignment(Pos.CENTER_LEFT);
 
         HBox falseRow = new HBox(10, falseLabel, falseField);
         falseRow.setAlignment(Pos.CENTER_LEFT);
 
-        // ===== Кнопки =====
         Button okBtn = new Button("OK");
         Button cancelBtn = new Button("Cancel");
         styleButton(okBtn, colors);
@@ -101,7 +89,6 @@ public class TextEditorDialog {
         HBox buttonsRow = new HBox(10, okBtn, cancelBtn);
         buttonsRow.setAlignment(Pos.CENTER_RIGHT);
 
-        // ===== Компоновка =====
         VBox root = new VBox(12, trueRow, falseRow, buttonsRow);
         root.setPadding(new Insets(16));
         root.setAlignment(Pos.CENTER_LEFT);
@@ -109,6 +96,7 @@ public class TextEditorDialog {
 
         Scene scene = new Scene(root);
         dialog.setScene(scene);
+        AudioManager.installButtonSound(scene);
 
         javafx.application.Platform.runLater(trueField::requestFocus);
 
@@ -132,7 +120,6 @@ public class TextEditorDialog {
                         "-fx-background-radius: 4;"
         );
 
-        // Ограничение длины + запрет '|' (разделитель) и '_' (escape-символ для пробела)
         UnaryOperator<TextFormatter.Change> filter = change -> {
             String newText = change.getControlNewText();
             if (newText.length() > MAX_LEN) return null;

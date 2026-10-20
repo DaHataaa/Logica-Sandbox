@@ -1,6 +1,7 @@
 package com.app.states;
 
 import com.app.Config;
+import com.app.audio.AudioManager;
 import com.app.core.BlockType;
 import com.app.core.Direction;
 import com.app.core.World;
@@ -59,25 +60,25 @@ public class MainState implements State {
     private String gridColor;
 
     private boolean deleteMode = false;
-    private AnimationTimer deleteTimer;
-    private long lastDeleteTime = 0;
-    private static final long DELETE_INTERVAL = 50_000_000;
 
-    // ===== Клавиатурный курсор =====
+    // ===== Таймер удаления =====
+    private AnimationTimer deleteTimer;
+    private long lastDeleteTickNanos = 0;
+    private static final long DELETE_INTERVAL_NANOS = 10_000_000L; // 10 мс — почти каждый кадр
+
+    private int lastPlacedCellX = -1;
+    private int lastPlacedCellY = -1;
+
     private boolean keyboardCursorActive = false;
     private int keyboardCursorX = 0;
     private int keyboardCursorY = 0;
 
-    // Защита от двойного срабатывания F
     private boolean fHandledOnPress = false;
 
-    // ===== Флаг "нужен рендер" =====
     private boolean needsRender = true;
 
-    // Для расчёта deltaSeconds в update()
     private long lastFrameNanos = 0;
 
-    // Защита от двойной установки фильтра клавиатуры
     private boolean filterInstalled = false;
 
     public MainState() {
@@ -128,11 +129,9 @@ public class MainState implements State {
         palette.setCurrentSpeed(simulationEngine.getSpeed());
         palette.updateSimulationStatus(simulationEngine.isRunning());
 
-        // Фокус: канвас получает клавиатуру
         renderer.getCanvas().setFocusTraversable(true);
         renderer.getCanvas().setOnMousePressed(e -> renderer.getCanvas().requestFocus());
 
-        // Фильтр клавиатуры на сцене
         root.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 installKeyboardFilter(newScene);
@@ -155,7 +154,6 @@ public class MainState implements State {
 
     private void requestRender() { needsRender = true; }
 
-    // ===== Фильтр клавиатуры =====
     private void installKeyboardFilter(Scene scene) {
         if (filterInstalled) return;
         filterInstalled = true;
@@ -165,7 +163,6 @@ public class MainState implements State {
 
             KeyCode code = event.getCode();
 
-            // ===== Стрелки =====
             boolean isArrow = code == KeyCode.LEFT || code == KeyCode.RIGHT
                     || code == KeyCode.UP || code == KeyCode.DOWN;
 
@@ -175,7 +172,6 @@ public class MainState implements State {
                 return;
             }
 
-            // ===== + / - : зум с клавиатуры =====
             if (code == KeyCode.EQUALS || code == KeyCode.ADD
                     || code == KeyCode.MINUS || code == KeyCode.SUBTRACT) {
 
@@ -210,10 +206,16 @@ public class MainState implements State {
                 return;
             }
 
-            // ===== F — действие (поставить блок / открыть редактор текста) =====
             if (code == KeyCode.F && !event.isControlDown()) {
                 handleFAction();
                 fHandledOnPress = true;
+                event.consume();
+                return;
+            }
+
+            // ===== R — удаление (сразу, независимо от фокуса) =====
+            if (code == KeyCode.R && !event.isControlDown()) {
+                handleRAction();
                 event.consume();
             }
         });
@@ -227,12 +229,43 @@ public class MainState implements State {
                 fHandledOnPress = false;
                 event.consume();
             }
+            if (event.getCode() == KeyCode.R) {
+                if (deleteMode) {
+                    deleteMode = false;
+                    deleteTimer.stop();
+                }
+                event.consume();
+            }
         });
     }
 
-    // ===== Логика клавиатурного курсора =====
+    // ===== Логика R =====
+    private void handleRAction() {
+        if (selecting || previewMode || panning) return;
+
+        if (keyboardCursorActive) {
+            removeBlockAtCell(keyboardCursorX, keyboardCursorY);
+            return;
+        }
+
+        if (selection.hasSelection()) {
+            selection.deleteSelected(world, world.getCurrentLayer());
+            selection.clear();
+            simulationEngine.markWorldChanged();
+            AudioManager.getInstance().playRemove();
+            requestRender();
+            System.out.println("Deleted selected area");
+            return;
+        }
+
+        // Включаем режим удаления и сразу удаляем под курсором
+        deleteMode = true;
+        lastDeleteTickNanos = 0;
+        deleteTimer.start();
+        removeBlockAtSceneCoords(lastSceneMouseX, lastSceneMouseY);
+    }
+
     private void handleKeyboardCursorMove(KeyCode code) {
-        // Только стрелки активируют клавиатурный режим
         ensureKeyboardCursor();
 
         switch (code) {
@@ -251,11 +284,6 @@ public class MainState implements State {
         requestRender();
     }
 
-    /**
-     * Активирует клавиатурный курсор (только если ещё не активен),
-     * позиционируя его на клетку под текущим курсором мыши.
-     * Вызывается ТОЛЬКО из handleKeyboardCursorMove (по стрелкам).
-     */
     private void ensureKeyboardCursor() {
         if (!keyboardCursorActive) {
             int[] cell = getCellUnderSceneCoords(lastSceneMouseX, lastSceneMouseY);
@@ -269,11 +297,6 @@ public class MainState implements State {
         }
     }
 
-    /**
-     * Возвращает клетку активного курсора БЕЗ активации клавиатурного режима.
-     * Если клавиатурный курсор активен — его клетка.
-     * Иначе — клетка под мышью.
-     */
     private int[] getActiveCursorCell() {
         if (keyboardCursorActive) {
             return new int[]{keyboardCursorX, keyboardCursorY};
@@ -296,12 +319,6 @@ public class MainState implements State {
         return cx >= 0 && cx < world.getSize() && cy >= 0 && cy < world.getSize();
     }
 
-    /**
-     * F-действие:
-     *  - если под активным курсором text-блок → открыть редактор
-     *  - иначе → поставить выбранный блок
-     * НЕ активирует клавиатурный режим (см. getActiveCursorCell).
-     */
     private void handleFAction() {
         int[] cell = getActiveCursorCell();
         int cx = cell[0];
@@ -317,9 +334,6 @@ public class MainState implements State {
         }
     }
 
-    /**
-     * Открывает диалог редактирования текста. После OK — сохраняет и перерисовывает.
-     */
     private void openTextEditor(int cellX, int cellY) {
         int layer = world.getCurrentLayer();
         String raw = world.getBlockTexts(layer, cellX, cellY);
@@ -354,7 +368,6 @@ public class MainState implements State {
                     + "): TRUE=\"" + result.trueText + "\" FALSE=\"" + result.falseText + "\"");
         }
 
-        // Возвращаем фокус на канвас, чтобы стрелки/F работали
         javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
     }
 
@@ -371,6 +384,7 @@ public class MainState implements State {
 
         world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
         simulationEngine.markWorldChanged();
+        AudioManager.getInstance().playPlacement();
         System.out.println("Placed (F): " + blockStr + " at (" + cellX + ", " + cellY
                 + ") on layer " + world.getCurrentLayer());
         requestRender();
@@ -382,6 +396,7 @@ public class MainState implements State {
         if (block != null && !block.equals("0")) {
             world.removeBlock(world.getCurrentLayer(), cellX, cellY);
             simulationEngine.markWorldChanged();
+            AudioManager.getInstance().playRemove();
             System.out.println("Removed (kb) at (" + cellX + ", " + cellY + ")");
             requestRender();
         }
@@ -391,10 +406,10 @@ public class MainState implements State {
         deleteTimer = new AnimationTimer() {
             @Override
             public void handle(long now) {
-                if (deleteMode && (now - lastDeleteTime) >= DELETE_INTERVAL) {
-                    lastDeleteTime = now;
-                    removeBlockAtSceneCoords(lastSceneMouseX, lastSceneMouseY);
-                }
+                if (!deleteMode) return;
+                if (now - lastDeleteTickNanos < DELETE_INTERVAL_NANOS) return;
+                lastDeleteTickNanos = now;
+                removeBlockAtSceneCoords(lastSceneMouseX, lastSceneMouseY);
             }
         };
     }
@@ -460,7 +475,11 @@ public class MainState implements State {
         double canvasY = canvasCoords.getY();
 
         if (canvasX < 0 || canvasX > renderer.getCanvas().getWidth() ||
-                canvasY < 0 || canvasY > renderer.getCanvas().getHeight()) return;
+                canvasY < 0 || canvasY > renderer.getCanvas().getHeight()) {
+            lastPlacedCellX = -1;
+            lastPlacedCellY = -1;
+            return;
+        }
 
         double worldX = camera.screenToWorldX(canvasX);
         double worldY = camera.screenToWorldY(canvasY);
@@ -470,24 +489,38 @@ public class MainState implements State {
         int cellY = (int) Math.floor(worldY / baseCellSize);
 
         if (cellX >= 0 && cellX < world.getSize() && cellY >= 0 && cellY < world.getSize()) {
+            if (cellX == lastPlacedCellX && cellY == lastPlacedCellY) {
+                return;
+            }
+            lastPlacedCellX = cellX;
+            lastPlacedCellY = cellY;
+
             if (world.blockTypes[world.getCurrentLayer()][cellY][cellX] == World.TYPE_TEXT) return;
 
             BlockType type = palette.getSelectedBlock();
             Direction dir = palette.getCurrentDirection();
 
             String blockStr = type.getName();
-
             if (type.hasDirection()) {
                 blockStr += "_f" + dir.getCode();
             }
 
             world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
             simulationEngine.markWorldChanged();
+            AudioManager.getInstance().playPlacement();
             System.out.println("Placed: " + blockStr + " at (" + cellX + ", " + cellY + ") on layer " + world.getCurrentLayer());
             requestRender();
+        } else {
+            lastPlacedCellX = -1;
+            lastPlacedCellY = -1;
         }
     }
 
+    /**
+     * Удаление под координатами. Без анти-спама: если в клетке есть блок — удаляем.
+     * Так как после удаления клетка пустая, следующий тик ничего не сделает.
+     * Это даёт «мгновенное» удаление без задержек и без спама remove.wav.
+     */
     private void removeBlockAtSceneCoords(double sceneX, double sceneY) {
         if (isMouseOverPalette(sceneX, sceneY)) return;
 
@@ -496,7 +529,9 @@ public class MainState implements State {
         double canvasY = canvasCoords.getY();
 
         if (canvasX < 0 || canvasX > renderer.getCanvas().getWidth() ||
-                canvasY < 0 || canvasY > renderer.getCanvas().getHeight()) return;
+                canvasY < 0 || canvasY > renderer.getCanvas().getHeight()) {
+            return;
+        }
 
         double worldX = camera.screenToWorldX(canvasX);
         double worldY = camera.screenToWorldY(canvasY);
@@ -509,6 +544,7 @@ public class MainState implements State {
             if (block != null && !block.equals("0")) {
                 world.removeBlock(world.getCurrentLayer(), cellX, cellY);
                 simulationEngine.markWorldChanged();
+                AudioManager.getInstance().playRemove();
                 System.out.println("Removed at (" + cellX + ", " + cellY + ")");
                 requestRender();
             }
@@ -531,7 +567,6 @@ public class MainState implements State {
                 String block = clip.get(dy).get(dx);
                 if (block == null || block.equals("0")) continue;
 
-                // Отрезаем текстовую часть для выбора спрайта
                 String spritePart = block;
                 int pipe = block.indexOf('|');
                 if (pipe >= 0) spritePart = block.substring(0, pipe);
@@ -546,7 +581,6 @@ public class MainState implements State {
                 int[] sprite = SpriteManager.getInstance()
                         .getSpriteWithDirection(blockName, cellScreenSize, dir, false);
                 if (sprite != null) {
-                    // Каждая клетка — от своей world-координаты (без накопления)
                     int cellX = mouseCellX + dx;
                     int cellY = mouseCellY + dy;
                     double cellScreenX = camera.worldToScreenX(cellX * baseCell);
@@ -558,7 +592,6 @@ public class MainState implements State {
             }
         }
 
-        // Рамка — тоже от точных world-координат
         double screenX1 = camera.worldToScreenX(mouseCellX * baseCell);
         double screenY1 = camera.worldToScreenY(mouseCellY * baseCell);
         double screenX2 = camera.worldToScreenX((mouseCellX + width) * baseCell);
@@ -613,7 +646,6 @@ public class MainState implements State {
         System.out.println("Entering MainState" + (currentMapName != null ? " - " + currentMapName : ""));
         nextState = this;
 
-        // preview и буфер неразрывны
         previewMode = Selection.hasClipboard();
         if (previewMode) {
             System.out.println("Clipboard has data — preview mode enabled");
@@ -639,7 +671,8 @@ public class MainState implements State {
         keyboardCursorActive = false;
         panning = false;
         deleteMode = false;
-        // Буфер НЕ трогаем — он сохраняется для следующей карты
+        lastPlacedCellX = -1;
+        lastPlacedCellY = -1;
     }
 
     @Override
@@ -652,7 +685,6 @@ public class MainState implements State {
         }
         lastFrameNanos = now;
 
-        // Слежение камеры ТОЛЬКО за клавиатурным курсором
         if (keyboardCursorActive) {
             double cursorScreenX = camera.worldToScreenX(
                     (keyboardCursorX + 0.5) * camera.getBaseCellSize()
@@ -680,7 +712,6 @@ public class MainState implements State {
 
         GraphicsContext gc = renderer.getCanvas().getGraphicsContext2D();
 
-        // 1) Превью копирования/вставки
         if (previewMode && Selection.hasClipboard()) {
             int previewCellX, previewCellY;
             if (keyboardCursorActive) {
@@ -695,7 +726,6 @@ public class MainState implements State {
             renderPreview(gc, previewCellX, previewCellY);
         }
 
-        // 2) Рамка активного выделения
         if (selecting || selection.hasSelection()) {
             String borderColor = selecting ? gridColor : powerColor;
             gc.setStroke(Color.web(borderColor));
@@ -739,7 +769,6 @@ public class MainState implements State {
             }
         }
 
-        // 3) Клавиатурный курсор
         if (keyboardCursorActive) {
             double screenX = camera.worldToScreenX(keyboardCursorX * camera.getBaseCellSize());
             double screenY = camera.worldToScreenY(keyboardCursorY * camera.getBaseCellSize());
@@ -819,23 +848,10 @@ public class MainState implements State {
                 requestRender();
                 break;
 
+            // R обрабатывается в installKeyboardFilter — здесь дублируем для случая,
+            // когда фильтр не стоит (на всякий случай)
             case R:
-                if (!selecting && !previewMode && !panning) {
-                    if (keyboardCursorActive) {
-                        removeBlockAtCell(keyboardCursorX, keyboardCursorY);
-                    } else if (selection.hasSelection()) {
-                        selection.deleteSelected(world, world.getCurrentLayer());
-                        selection.clear();
-                        simulationEngine.markWorldChanged();
-                        requestRender();
-                        System.out.println("Deleted selected area");
-                    } else {
-                        deleteMode = true;
-                        lastDeleteTime = System.nanoTime();
-                        deleteTimer.start();
-                        removeBlockAtSceneCoords(lastSceneMouseX, lastSceneMouseY);
-                    }
-                }
+                handleRAction();
                 break;
 
             case W: palette.setDirection(Direction.UP); break;
@@ -889,9 +905,9 @@ public class MainState implements State {
                     }
                     selection.paste(world, world.getCurrentLayer(), px, py);
                     simulationEngine.markWorldChanged();
+                    AudioManager.getInstance().playPlacement();
                     requestRender();
                     System.out.println("Paste done at (" + px + ", " + py + ")");
-                    // previewMode остаётся true — буфер не пуст
                 }
                 break;
 
@@ -948,6 +964,9 @@ public class MainState implements State {
             requestRender();
         }
 
+        lastPlacedCellX = -1;
+        lastPlacedCellY = -1;
+
         boolean overPalette = isMouseOverPalette(event.getSceneX(), event.getSceneY());
 
         if (event.getButton() == MouseButton.SECONDARY) {
@@ -975,6 +994,10 @@ public class MainState implements State {
         if (event.getButton() == MouseButton.SECONDARY) {
             panning = false;
             renderer.getCanvas().setCursor(javafx.scene.Cursor.DEFAULT);
+        }
+        if (event.getButton() == MouseButton.PRIMARY) {
+            lastPlacedCellX = -1;
+            lastPlacedCellY = -1;
         }
     }
 

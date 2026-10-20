@@ -1,6 +1,7 @@
 package com.app.ui;
 
 import com.app.Config;
+import com.app.audio.AudioManager;
 import com.app.graphics.ColorConfig;
 import com.app.graphics.SpriteManager;
 import javafx.scene.control.Alert;
@@ -15,10 +16,6 @@ import java.nio.file.Path;
 
 public class HelpDialog {
 
-    /**
-     * Показывает окно помощи (модальный Alert) по центру главного окна.
-     * Текст берётся из data/help_text.txt при каждом вызове.
-     */
     public static void show() {
         ColorConfig colors = SpriteManager.getInstance().getColors();
 
@@ -68,7 +65,6 @@ public class HelpDialog {
         alert.getDialogPane().setContent(scrollPane);
         alert.getDialogPane().setPrefSize(820, 740);
 
-        // Стилизация под текущий текстурпак
         alert.getDialogPane().setStyle(
                 "-fx-background-color: " + colors.getBackground() + ";"
         );
@@ -78,12 +74,11 @@ public class HelpDialog {
             );
         }
 
-        // ===== Центрирование относительно главного окна =====
         alert.setOnShown(evt -> {
             Stage stage = (Stage) alert.getDialogPane().getScene().getWindow();
-            javafx.stage.Window owner = null;
+            AudioManager.installButtonSound(alert.getDialogPane().getScene());
 
-            // Ищем главное окно приложения
+            javafx.stage.Window owner = null;
             for (javafx.stage.Window w : javafx.stage.Window.getWindows()) {
                 if (w instanceof Stage && w != stage && w.isShowing()) {
                     owner = w;

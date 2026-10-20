@@ -1,5 +1,6 @@
 package com.app;
 
+import com.app.audio.AudioManager;
 import com.app.graphics.SpriteManager;
 import com.app.states.MenuState;
 import javafx.animation.AnimationTimer;
@@ -21,7 +22,7 @@ public class Main extends Application {
     public void start(Stage primaryStage) {
         Config config = Config.getInstance();
 
-        SpriteManager.getInstance(); // инициализируем SpriteManager
+        SpriteManager.getInstance();
         StyleManager.generateCSS();
 
         masterState = new MasterState(new MenuState());
@@ -29,7 +30,6 @@ public class Main extends Application {
 
         scene = new Scene(currentRoot, config.getWindowWidth(), config.getWindowHeight());
 
-        // Загружаем сгенерированный CSS
         File cssFile = Config.getDataDir().resolve("styles.css").toFile();
         if (cssFile.exists()) {
             scene.getStylesheets().add(cssFile.toURI().toString());
@@ -37,6 +37,9 @@ public class Main extends Application {
         } else {
             System.out.println("CSS not found at: " + cssFile.getAbsolutePath());
         }
+
+        AudioManager.installButtonSound(scene);
+        AudioManager.getInstance();
 
         scene.setOnKeyPressed(masterState::handleKeyPressed);
         scene.setOnKeyReleased(masterState::handleKeyReleased);

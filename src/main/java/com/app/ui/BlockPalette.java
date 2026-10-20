@@ -1,6 +1,7 @@
 package com.app.ui;
 
 import com.app.Config;
+import com.app.audio.AudioManager;
 import com.app.core.BlockType;
 import com.app.core.Direction;
 import com.app.graphics.SpriteManager;
@@ -38,7 +39,6 @@ public class BlockPalette extends VBox {
     private Text simStatusText;
     private Rectangle simStatusDot;
 
-    // ===== TPS ввод =====
     private TextField speedField;
     private Text actualTpsText;
     private PauseTransition speedDebounce;
@@ -48,7 +48,6 @@ public class BlockPalette extends VBox {
     private boolean isSimulationRunning = true;
     private int currentSpeed = 60;
 
-    // Флаг, чтобы listener не срабатывал при программном setText
     private boolean suppressSpeedListener = false;
 
     private static final String FIELD_BASE_STYLE =
@@ -115,6 +114,7 @@ public class BlockPalette extends VBox {
                 selectedIndex = index;
                 updateSelection();
                 if (onSelectionChange != null) onSelectionChange.run();
+                AudioManager.getInstance().playBlockSelected(type);
             });
 
             drawIcon(canvas, getSpriteName(type), type.hasDirection(), currentDirection);
@@ -141,33 +141,27 @@ public class BlockPalette extends VBox {
         speedField = new TextField(getSpeedString(currentSpeed));
         speedField.setPrefWidth(paletteWidth - 30);
         speedField.setMaxWidth(paletteWidth - 30);
-        // Обычное состояние — ОРАНЖЕВАЯ рамка
         speedField.setStyle(fieldStyle(colors.getSignalOn()));
         speedField.setFocusTraversable(true);
 
-        // Любой ввод — рамка становится ОБЫЧНОЙ (grid)
         speedField.textProperty().addListener((obs, oldText, newText) -> {
             if (suppressSpeedListener) return;
             speedField.setStyle(fieldStyle(colors.getGrid()));
         });
 
-        // Enter — применяем и возвращаем ОРАНЖЕВУЮ рамку
         speedField.setOnAction(e -> {
             applySpeedFromField();
         });
 
-        // Клик по полю — рамка обычная (показываем, что идёт ввод)
         speedField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
             if (isFocused) {
                 speedField.setStyle(fieldStyle(colors.getGrid()));
             }
-            // Blur — НЕ применяем, но возвращаем оранжевую рамку
             if (wasFocused && !isFocused) {
                 speedField.setStyle(fieldStyle(colors.getSignalOn()));
             }
         });
 
-        // ESC — откат к текущему и оранжевая рамка
         speedField.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.ESCAPE) {
                 setFieldTextSilently(getSpeedString(currentSpeed));
@@ -177,7 +171,6 @@ public class BlockPalette extends VBox {
             }
         });
 
-        // ===== Реальный TPS =====
         actualTpsText = new Text("actual: 0 TPS");
         actualTpsText.setFill(Color.web(colors.getSignalOn()));
         actualTpsText.setFont(Font.font("Monospace", 14));
@@ -186,7 +179,6 @@ public class BlockPalette extends VBox {
         speedBox.getChildren().addAll(topSeparator, speedLabel, speedField, actualTpsText);
         getChildren().add(speedBox);
     }
-
 
     private String fieldStyle(String borderColor) {
         String bg = colors.getBackground();
@@ -198,14 +190,12 @@ public class BlockPalette extends VBox {
                 "-fx-border-color: " + borderColor + ";";
     }
 
-    /** Устанавливает текст в поле, не триггеря listener. */
     private void setFieldTextSilently(String text) {
         suppressSpeedListener = true;
         speedField.setText(text);
         suppressSpeedListener = false;
     }
 
-    /** Применяет ввод из поля. Вызывается ТОЛЬКО по Enter. */
     private void applySpeedFromField() {
         if (speedField == null) return;
 
@@ -237,17 +227,13 @@ public class BlockPalette extends VBox {
         currentSpeed = newSpeed;
 
         setFieldTextSilently(getSpeedString(currentSpeed));
-
         speedField.setStyle(fieldStyle(colors.getSignalOn()));
-
         speedField.getParent().requestFocus();
 
         if (changed && onSpeedChange != null) {
             onSpeedChange.run();
         }
     }
-
-
 
     private void createSimulationStatus() {
         VBox statusBox = new VBox(5);
@@ -318,7 +304,6 @@ public class BlockPalette extends VBox {
         }
     }
 
-    /** Реальный TPS. Вызывается из FX-потока. */
     public void setActualTps(int tps) {
         if (actualTpsText == null) return;
         String text;
@@ -458,9 +443,13 @@ public class BlockPalette extends VBox {
 
     public void setSelectedIndex(int index) {
         if (index >= 0 && index < blockTypes.length) {
+            boolean changed = (selectedIndex != index);
             selectedIndex = index;
             updateSelection();
             if (onSelectionChange != null) onSelectionChange.run();
+            if (changed) {
+                AudioManager.getInstance().playBlockSelected(blockTypes[index]);
+            }
         }
     }
 

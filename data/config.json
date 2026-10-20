@@ -2,7 +2,7 @@
   "window_width": 1600,
   "window_height": 900,
   "fullscreen": false,
-  "simulation_speed": 60,
+  "simulation_speed": 120,
   "available_speeds": [
     1,
     10,
@@ -10,10 +10,15 @@
     120
   ],
   "undo_depth": 50,
-  "cell_size_min": 4,
+  "cell_size_min": 3,
   "cell_size_max": 100,
   "default_cell_size": 32,
   "world_size": 256,
   "layers": 5,
-  "current_texturepack": "Classic"
+  "current_texturepack": "Classic",
+  "master_volume": 100,
+  "ui_click_volume": 100,
+  "placement_volume": 100,
+  "remove_volume": 100,
+  "block_activation_volume": 0
 }
