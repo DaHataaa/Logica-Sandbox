@@ -79,6 +79,7 @@ public class Config {
     @SerializedName("block_activation_volume")
     private int blockActivationVolume = 80;
 
+
     private Config() {}
 
     public static synchronized Config getInstance() {
@@ -153,6 +154,7 @@ public class Config {
                     this.placementVolume = loaded.placementVolume;
                     this.removeVolume = loaded.removeVolume;
                     this.blockActivationVolume = loaded.blockActivationVolume;
+
                 }
             } catch (IOException e) {
                 System.err.println("Failed to load config, using defaults: " + e.getMessage());
@@ -205,7 +207,6 @@ public class Config {
     public void setUndoDepth(int undoDepth) { this.undoDepth = undoDepth; }
     public void setCellSizeMin(int cellSizeMin) { this.cellSizeMin = cellSizeMin; }
     public void setCellSizeMax(int cellSizeMax) { this.cellSizeMax = cellSizeMax; }
-    public void setWorldSize(int worldSize) { this.worldSize = worldSize; }
     public void setLayers(int layers) { this.layers = layers; }
 
     public void setMasterVolume(int masterVolume) { this.masterVolume = masterVolume; }
@@ -213,4 +214,5 @@ public class Config {
     public void setPlacementVolume(int placementVolume) { this.placementVolume = placementVolume; }
     public void setRemoveVolume(int removeVolume) { this.removeVolume = removeVolume; }
     public void setBlockActivationVolume(int blockActivationVolume) { this.blockActivationVolume = blockActivationVolume; }
+
 }

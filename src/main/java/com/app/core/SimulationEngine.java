@@ -87,6 +87,7 @@ public class SimulationEngine {
         startTpsCounter();
     }
 
+
     public void markWorldChanged() {
         activeCellsDirty = true;
     }
@@ -236,7 +237,6 @@ public class SimulationEngine {
             worldSignals[layer][y][x] = newState;
             worldBlockStates[layer][y][x] = newState;
 
-            // ===== ЗВУК: только на фронте false→true =====
             if (newState) {
                 com.app.audio.AudioManager.getInstance()
                         .playSignal(worldBlockTypes[layer][y][x]);
@@ -392,11 +392,17 @@ public class SimulationEngine {
 
     public void step() {
         if (isPaused.get()) {
-            simulateTick();
-            tickCounter.incrementAndGet();
-            if (onTickComplete != null) {
-                javafx.application.Platform.runLater(onTickComplete);
-            }
+            tickOnce();
+        }
+    }
+
+    private void tickOnce() {
+        simulateTick();
+        int tick = tickCounter.incrementAndGet();
+
+
+        if (onTickComplete != null) {
+            javafx.application.Platform.runLater(onTickComplete);
         }
     }
 
@@ -450,11 +456,7 @@ public class SimulationEngine {
                     }
 
                     if (intervalNanos < 0) {
-                        simulateTick();
-                        tickCounter.incrementAndGet();
-                        if (onTickComplete != null) {
-                            javafx.application.Platform.runLater(onTickComplete);
-                        }
+                        tickOnce();
                         nextTickNanos = System.nanoTime();
                         continue;
                     }
@@ -474,11 +476,7 @@ public class SimulationEngine {
                     now = System.nanoTime();
                     if (now < nextTickNanos) continue;
 
-                    simulateTick();
-                    tickCounter.incrementAndGet();
-                    if (onTickComplete != null) {
-                        javafx.application.Platform.runLater(onTickComplete);
-                    }
+                    tickOnce();
 
                     long iv = intervalNanos;
                     if (iv <= 0) {

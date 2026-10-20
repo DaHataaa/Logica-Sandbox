@@ -133,7 +133,6 @@ public class AudioManager {
     public void playBlockSelected(BlockType type) {
         if (blockActivationMuted) return;
         if (type == null) return;
-        if (type == BlockType.GETTER) return;
         play(type.getName());
     }
 
@@ -147,6 +146,7 @@ public class AudioManager {
     private static String fileNameForWorldType(int type) {
         switch (type) {
             case World.TYPE_ARROW:  return "arrow";
+            case World.TYPE_GETTER: return "getter";
             case World.TYPE_BRIDGE: return "bridge";
             case World.TYPE_PEG:    return "peg";
             case World.TYPE_POWER:  return "power";
