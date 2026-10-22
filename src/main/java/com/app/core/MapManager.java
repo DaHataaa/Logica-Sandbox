@@ -4,6 +4,10 @@ import com.app.Config;
 
 import java.io.*;
 import java.nio.file.*;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,6 +21,169 @@ public class MapManager {
         } catch (IOException e) {
             System.err.println("Failed to create maps directory: " + e.getMessage());
         }
+    }
+
+    // ============================================================
+    // СТАТИСТИКА КАРТЫ (для карточек в меню)
+    // ============================================================
+
+    // ============================================================
+// СТАТИСТИКА КАРТЫ (для карточек в меню)
+// ============================================================
+
+    public static class MapStats {
+        public final String name;
+        public final long lastModifiedMillis;
+        public final String lastModifiedPretty;
+
+        public final int logicGates;        // not + or + and + xor
+        public final int approxTransistors; // точная сумма по типам вентилей
+        public final int arrows;            // arrow + bridge + getter
+        public final int pegs;
+        public final int powers;
+        public final int texts;
+        public final int totalBlocks;
+
+        public MapStats(String name,
+                        long lastModifiedMillis,
+                        String lastModifiedPretty,
+                        int logicGates,
+                        int approxTransistors,
+                        int arrows,
+                        int pegs,
+                        int powers,
+                        int texts,
+                        int totalBlocks) {
+            this.name = name;
+            this.lastModifiedMillis = lastModifiedMillis;
+            this.lastModifiedPretty = lastModifiedPretty;
+            this.logicGates = logicGates;
+            this.approxTransistors = approxTransistors;
+            this.arrows = arrows;
+            this.pegs = pegs;
+            this.powers = powers;
+            this.texts = texts;
+            this.totalBlocks = totalBlocks;
+        }
+    }
+
+    // Точные коэффициенты транзисторов на один вентиль (static CMOS, NAND-эквивалент):
+//   NOT  = инвертор            = 1 pMOS + 1 nMOS                  = 2
+//   AND  = NAND2 + NOT         = (2 pMOS + 2 nMOS) + 2            = 6
+//   OR   = NOR2 + NOT          = (2 pMOS + 2 nMOS) + 2            = 6
+//   XOR  = оптимизированный    = 12 (static CMOS XOR2)
+    public static final int TR_NOT = 2;
+    public static final int TR_AND = 6;
+    public static final int TR_OR  = 6;
+    public static final int TR_XOR = 12;
+
+    private static final DateTimeFormatter DATE_FMT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                    .withZone(ZoneId.systemDefault());
+
+    /**
+     * Возвращает статистику карты по её файлу (без загрузки в World).
+     * Если файл не читается — возвращает null.
+     */
+    public static MapStats getMapStats(String mapName) {
+        Path file = MAPS_DIR.resolve(sanitizeFilename(mapName) + ".logicmap");
+        if (!Files.exists(file)) return null;
+
+        long lastModifiedMillis = 0L;
+        try {
+            FileTime ft = Files.getLastModifiedTime(file);
+            lastModifiedMillis = ft.toMillis();
+        } catch (IOException ignored) {}
+
+        String pretty = lastModifiedMillis > 0
+                ? DATE_FMT.format(Instant.ofEpochMilli(lastModifiedMillis))
+                : "—";
+
+        int notCount = 0;
+        int andCount = 0;
+        int orCount  = 0;
+        int xorCount = 0;
+
+        int arrows = 0;
+        int pegs = 0;
+        int powers = 0;   // оставлено для совместимости с MapStats; в карточке не показываем
+        int texts = 0;
+        int total = 0;
+
+        boolean readingData = false;
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                if (line.startsWith("#LOGICMAP")) continue;
+                if (line.startsWith("size=")) continue;
+                if (line.startsWith("layers=")) continue;
+                if (line.startsWith("#layer")) { readingData = true; continue; }
+                if (line.equals("---")) { readingData = !readingData; continue; }
+
+                if (!readingData) continue;
+
+                String[] parts = line.split(" ");
+                for (String block : parts) {
+                    if (block == null || block.isEmpty() || block.equals("0")) continue;
+                    total++;
+
+                    // Текстовый блок: "text_<sf>f|TRUE|FALSE"
+                    if (block.startsWith("text_")) {
+                        texts++;
+                        continue;
+                    }
+                    // Без суффиксов: power
+                    if (block.equals("power")) {
+                        powers++;
+                        continue;
+                    }
+
+                    // С суффиксами: "<name>_<s><d>"
+                    int us = block.indexOf('_');
+                    if (us <= 0) continue;
+                    String name = block.substring(0, us);
+
+                    switch (name) {
+                        case "not" -> notCount++;
+                        case "and" -> andCount++;
+                        case "or"  -> orCount++;
+                        case "xor" -> xorCount++;
+                        case "arrow", "bridge", "getter" -> arrows++;
+                        case "peg" -> pegs++;
+                        default -> { /* неизвестное — игнорируем */ }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Failed to read map stats: " + e.getMessage());
+            return null;
+        }
+
+        int logicGates = notCount + andCount + orCount + xorCount;
+
+        // Точный подсчёт: каждый тип вентиля по своему коэффициенту
+        int approxTransistors =
+                notCount * TR_NOT
+                        + andCount * TR_AND
+                        + orCount  * TR_OR
+                        + xorCount * TR_XOR;
+
+        return new MapStats(
+                mapName,
+                lastModifiedMillis,
+                pretty,
+                logicGates,
+                approxTransistors,
+                arrows,
+                pegs,
+                powers,
+                texts,
+                total
+        );
     }
 
     public static boolean saveMap(String name, World world) {
@@ -47,7 +214,6 @@ public class MapManager {
                             if (texts == null || texts.isEmpty()) {
                                 texts = World.DEFAULT_TEXT_TRUE + "|" + World.DEFAULT_TEXT_FALSE;
                             }
-                            // пробел → _ (экранирование, чтобы split(" ") не сломал)
                             texts = texts.replace(' ', '_');
                             line.append("text_").append(s).append("f|").append(texts);
                         } else {
@@ -131,7 +297,6 @@ public class MapManager {
                 }
 
                 if (readingData && size > 0 && currentLayer >= 0 && currentLayer < layers) {
-                    // Пробелы внутри текстов экранированы как '_', поэтому split(" ") безопасен
                     String[] parts = line.split(" ");
                     for (int x = 0; x < parts.length && x < size; x++) {
                         String block = parts[x];
@@ -147,7 +312,6 @@ public class MapManager {
                 }
             }
 
-            // Сигналы уже восстановлены в setBlock (blockStates/signals).
             for (int l = 0; l < layers; l++) {
                 for (int y = 0; y < size; y++) {
                     for (int x = 0; x < size; x++) {

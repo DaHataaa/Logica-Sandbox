@@ -10,15 +10,15 @@
     120
   ],
   "undo_depth": 50,
-  "cell_size_min": 3,
+  "cell_size_min": 2,
   "cell_size_max": 100,
   "default_cell_size": 32,
-  "world_size": 256,
+  "world_size": 512,
   "layers": 5,
   "current_texturepack": "Classic",
   "master_volume": 100,
-  "ui_click_volume": 100,
+  "ui_click_volume": 82,
   "placement_volume": 100,
-  "remove_volume": 75,
+  "remove_volume": 70,
   "block_activation_volume": 0
 }

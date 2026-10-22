@@ -27,6 +27,10 @@ public class GridRenderer {
     private Canvas canvas;
     private GraphicsContext gc;
 
+    // <<< TINY: при cellScreenSize <= этого значения спрайты не рисуем —
+    // вместо спрайтов рисуем квадрат по центру клетки со стороной в половину клетки
+    private static final int TINY_CELL_THRESHOLD = 5;
+
     private final Map<String, Map<Integer, Map<String, WritableImage>>> spriteImageCache = new HashMap<>();
 
     // КЭШ WritableImage ДЛЯ drawSprite (по идентичности int[])
@@ -197,7 +201,7 @@ public class GridRenderer {
         gc.setFill(bgColor);
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
 
-        // ===== ПРОХОД 1: фоны + спрайты =====
+        // ===== ПРОХОД 1: фоны + спрайты / точки =====
         for (int y = startY; y < endY; y++) {
             for (int x = startX; x < endX; x++) {
                 int typeId = world.blockTypes[currentLayer][y][x];
@@ -219,10 +223,17 @@ public class GridRenderer {
                     String blockName = (typeId >= 0 && typeId < TYPE_NAMES.length)
                             ? TYPE_NAMES[typeId] : "0";
 
-                    Direction spriteDir = DIR_BY_INDEX[dirIdx & 3];
-                    boolean spriteSignal = false;
-
-                    if (useSimplifiedRendering && cellScreenSize > 32) {
+                    // <<< TINY: крошечные клетки — квадрат по центру, сторона = половина клетки
+                    if (cellScreenSize <= TINY_CELL_THRESHOLD) {
+                        gc.setFill(getBlockColor(blockName));
+                        // Сторона = половина клетки. Позиция — по центру клетки.
+                        // Для клеток 1..5 px сторона округляется: 1px→1, 2px→1, 3px→2,
+                        // 4px→2, 5px→3 (целочисленное деление, минимум 1px).
+                        int dotSize = Math.max(1, cellScreenSize / 2);
+                        int offset = (cellScreenSize - dotSize) / 2;
+                        gc.fillRect(ix + offset, iy + offset, dotSize, dotSize);
+                    } else if (useSimplifiedRendering && cellScreenSize > 32) {
+                        // Крупный зум при большом числе видимых клеток — упрощённый режим с буквой
                         gc.setFill(getBlockColor(blockName));
                         gc.fillRect(ix, iy, cellScreenSize, cellScreenSize);
                         gc.setFill(Color.WHITE);
@@ -230,7 +241,8 @@ public class GridRenderer {
                         gc.fillText(blockName.substring(0, 1).toUpperCase(),
                                 ix + cellScreenSize / 3.0, iy + cellScreenSize / 1.5);
                     } else {
-                        WritableImage spriteImage = getCachedSprite(blockName, cellScreenSize, spriteDir, spriteSignal);
+                        Direction spriteDir = DIR_BY_INDEX[dirIdx & 3];
+                        WritableImage spriteImage = getCachedSprite(blockName, cellScreenSize, spriteDir, false);
                         if (spriteImage != null) {
                             gc.drawImage(spriteImage, ix, iy);
                         }
@@ -277,7 +289,8 @@ public class GridRenderer {
     }
 
     private void renderTextBlocks(int layer, int startX, int startY, int endX, int endY, int cellScreenSize) {
-        if (cellScreenSize < 6) return;
+        // <<< TINY: на крошечных клетках текст не рисуем вообще
+        if (cellScreenSize <= TINY_CELL_THRESHOLD) return;
 
         int textStartX = Math.max(0, startX - 16);
         int textStartY = Math.max(0, startY);

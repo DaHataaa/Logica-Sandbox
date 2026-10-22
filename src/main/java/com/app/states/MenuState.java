@@ -6,22 +6,23 @@ import com.app.core.World;
 import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
 import com.app.ui.HelpDialog;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.input.*;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontPosture;
+import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import com.app.graphics.MenuBackgroundRenderer;
 import javafx.scene.canvas.Canvas;
-import javafx.scene.layout.StackPane;
 
 public class MenuState implements State {
     private BorderPane root;
@@ -40,10 +41,10 @@ public class MenuState implements State {
         root = new BorderPane();
         root.setStyle("-fx-background-color: " + backgroundColor + ";");
 
-        centerPanel = new VBox(22);
+        centerPanel = new VBox(10);
         centerPanel.setAlignment(Pos.TOP_CENTER);
         centerPanel.setStyle("-fx-padding: 20;");
-        centerPanel.setMaxWidth(800);
+        centerPanel.setMaxWidth(820);
 
         Text title = new Text("Logica-Sandbox");
         title.getStyleClass().add("menu-title");
@@ -70,18 +71,26 @@ public class MenuState implements State {
         settingsBtn.getStyleClass().add("button");
         settingsBtn.setOnAction(e -> nextState = new SettingsState());
 
+
+        VBox bottomButtons = new VBox(8);
+        bottomButtons.setAlignment(Pos.CENTER);
+        bottomButtons.getChildren().addAll(newMapBtn, texpacksBtn, helpBtn, settingsBtn);
+
+        // <<< УМЕНЬШЕНО: 12 → 8 (расстояние между карточками)
         mapsContainer = new VBox(8);
         mapsContainer.setAlignment(Pos.TOP_CENTER);
 
         scrollPane = new ScrollPane(mapsContainer);
         scrollPane.getStyleClass().add("map-scroll-pane");
         scrollPane.setFitToWidth(true);
-        scrollPane.setPrefWidth(500);
+        scrollPane.setPrefWidth(700);
         scrollPane.setPrefHeight(850);
+        // <<< НОВОЕ: список карт растягивается по вертикали, забирая всё
+        //     свободное место у centerPanel, а кнопки прижимаются вниз
+        VBox.setVgrow(scrollPane, Priority.ALWAYS);
 
         centerPanel.getChildren().addAll(
-                title, mapsText, scrollPane,
-                newMapBtn, texpacksBtn, helpBtn, settingsBtn
+                title, mapsText, scrollPane, bottomButtons
         );
 
         Canvas bgCanvas = new Canvas();
@@ -109,58 +118,115 @@ public class MenuState implements State {
         }
 
         for (String name : mapNames) {
-            HBox mapRow = createMapRow(name);
-            mapsContainer.getChildren().add(mapRow);
+            VBox card = createMapCard(name);
+            mapsContainer.getChildren().add(card);
         }
     }
 
-    private HBox createMapRow(String mapName) {
-        HBox row = new HBox(10);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.getStyleClass().add("map-row");
-        row.setMaxWidth(500);
-        row.setPrefWidth(500);
-        row.setStyle("-fx-background-color: " + colors.getBridge() + ";");
+    private VBox createMapCard(String mapName) {
+        MapManager.MapStats stats = MapManager.getMapStats(mapName);
+
+        VBox card = new VBox(6);
+        card.setPadding(new Insets(10, 14, 10, 14));
+        card.setMaxWidth(660);
+        card.setPrefWidth(660);
+        card.setStyle(cardStyle(false));
+
+        HBox header = new HBox(10);
+        header.setAlignment(Pos.CENTER_LEFT);
 
         Text nameLabel = new Text(mapName);
-        nameLabel.getStyleClass().add("map-name");
-        nameLabel.setFill(Color.web(colors.getBackground()));
+        nameLabel.setFill(Color.web(colors.getGrid()));
+        nameLabel.setFont(Font.font("Monospaced", FontWeight.BOLD, 22));
+        HBox.setHgrow(nameLabel, Priority.ALWAYS);
+        nameLabel.setWrappingWidth(480);
 
-        HBox buttonsBox = new HBox(8);
+        HBox buttonsBox = new HBox(6);
         buttonsBox.setAlignment(Pos.CENTER_RIGHT);
-        buttonsBox.setVisible(false);
-        buttonsBox.setManaged(false);
 
-        Button playBtn = new Button("▶");
-        playBtn.getStyleClass().add("icon-button");
-        playBtn.setOnAction(e -> loadMap(mapName));
-
-        Button renameBtn = new Button("✎");
-        renameBtn.getStyleClass().add("icon-button");
-        renameBtn.setOnAction(e -> renameMap(mapName));
-
-        Button deleteBtn = new Button("🗑");
-        deleteBtn.getStyleClass().add("icon-button");
-        deleteBtn.setOnAction(e -> deleteMap(mapName));
+        Button playBtn = makeIconButton("▶", () -> loadMap(mapName));
+        Button renameBtn = makeIconButton("✎", () -> renameMap(mapName));
+        Button deleteBtn = makeIconButton("🗑", () -> deleteMap(mapName));
 
         buttonsBox.getChildren().addAll(playBtn, renameBtn, deleteBtn);
+        header.getChildren().addAll(nameLabel, buttonsBox);
 
-        row.setOnMouseEntered(e -> {
-            row.setStyle("-fx-background-color: " + colors.getSignalOn() + ";");
-            buttonsBox.setVisible(true);
-            buttonsBox.setManaged(true);
-        });
+        String dateStr = (stats != null) ? stats.lastModifiedPretty : "—";
+        Text dateLabel = smallItalicText("🕒 " + dateStr);
 
-        row.setOnMouseExited(e -> {
-            row.setStyle("-fx-background-color: " + colors.getBridge() + ";");
-            buttonsBox.setVisible(false);
-            buttonsBox.setManaged(false);
-        });
+        Region sep = new Region();
+        sep.setPrefHeight(1);
+        sep.setMaxHeight(1);
+        sep.setStyle("-fx-background-color: " + colors.getGrid() + ";");
 
-        row.getChildren().addAll(nameLabel, buttonsBox);
-        HBox.setHgrow(buttonsBox, javafx.scene.layout.Priority.ALWAYS);
+        VBox statsBox = new VBox(3);
 
-        return row;
+        if (stats != null) {
+            String gatesLine = "🔣 Logic gates: " + stats.logicGates
+                    + "   ≈   " + stats.approxTransistors + " transistors";
+            statsBox.getChildren().add(smallItalicText(gatesLine));
+
+            String arrowsLine = "➡ Arrows: " + stats.arrows
+                    + "    📌 Pegs: " + stats.pegs;
+            statsBox.getChildren().add(smallItalicText(arrowsLine));
+
+            String textLine = "📝 Text blocks: " + stats.texts
+                    + "    🧩 Total blocks: " + stats.totalBlocks;
+            statsBox.getChildren().add(smallItalicText(textLine));
+        } else {
+            statsBox.getChildren().add(smallItalicText("📊 Stats unavailable"));
+        }
+
+        card.getChildren().addAll(header, dateLabel, sep, statsBox);
+
+        card.setOnMouseEntered(e -> card.setStyle(cardStyle(true)));
+        card.setOnMouseExited(e -> card.setStyle(cardStyle(false)));
+
+        return card;
+    }
+
+    private String cardStyle(boolean hover) {
+        String border = hover ? colors.getSignalOn() : colors.getGrid();
+        return "-fx-background-color: " + colors.getBackground() + ";" +
+                "-fx-border-color: " + border + ";" +
+                "-fx-border-width: 3;" +
+                "-fx-border-radius: 8;" +
+                "-fx-background-radius: 8;";
+    }
+
+    private Button makeIconButton(String glyph, Runnable action) {
+        Button btn = new Button(glyph);
+        btn.getStyleClass().add("icon-button");
+        btn.setOnAction(e -> action.run());
+
+        String normalStyle = iconBtnStyle(colors.getBridge());
+        String hoverStyle = iconBtnStyle(colors.getPower());
+
+        btn.setStyle(normalStyle);
+        btn.setOnMouseEntered(e -> btn.setStyle(hoverStyle));
+        btn.setOnMouseExited(e -> btn.setStyle(normalStyle));
+
+        return btn;
+    }
+
+    private String iconBtnStyle(String bg) {
+        return "-fx-text-fill: " + colors.getBackground() + ";" +
+                "-fx-font-size: 24px;" +
+                "-fx-font-weight: bold;" +
+                "-fx-padding: 5 10 5 10;" +
+                "-fx-background-radius: 3;" +
+                "-fx-cursor: hand;" +
+                "-fx-min-width: 50;" +
+                "-fx-min-height: 42;" +
+                "-fx-pref-height: 42;" +
+                "-fx-background-color: " + bg + ";";
+    }
+
+    private Text smallItalicText(String s) {
+        Text t = new Text(s);
+        t.setFill(Color.web(colors.getGrid()));
+        t.setFont(Font.font("Monospaced", FontPosture.ITALIC, 13));
+        return t;
     }
 
     private void openTexpacks() {

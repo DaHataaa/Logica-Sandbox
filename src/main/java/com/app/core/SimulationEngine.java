@@ -21,25 +21,23 @@ public class SimulationEngine {
     private static final int[] DX = {0, 1, 0, -1};
     private static final int[] DY = {-1, 0, 1, 0};
 
-    private static int pack(int layer, int x, int y) {
-        return (layer << 16) | (y << 8) | x;
-    }
-    private static int unpackLayer(int p) { return (p >>> 16) & 0xFF; }
-    private static int unpackY(int p) { return (p >>> 8) & 0xFF; }
-    private static int unpackX(int p) { return p & 0xFF; }
+    private static long pack(int layer, int x, int y) { return ((long) layer << 32) | ((long) y << 16) | (long) x; }
+    private static int unpackLayer(long p) { return (int) (p >>> 32) & 0xFF; }
+    private static int unpackY(long p) { return (int) (p >>> 16) & 0xFFFF; }
+    private static int unpackX(long p) { return (int) p & 0xFFFF; }
 
-    private int[] dirty;
-    private int dirtyCount = 0;
+    private long[] dirty;
+    private long dirtyCount = 0;
     private boolean[][][] inDirty;
 
-    private int[] nextDirty;
+    private long[] nextDirty;
     private int nextDirtyCount = 0;
     private boolean[][][] inNextDirty;
 
-    private int[] pendingChanges;
+    private long[] pendingChanges;
     private int pendingChangesCount = 0;
 
-    private int[] activeCells;
+    private long[] activeCells;
     private int activeCellsCount = 0;
     private volatile boolean activeCellsDirty = true;
 
@@ -74,10 +72,10 @@ public class SimulationEngine {
         this.worldSignals     = world.getSignalsArray();
 
         int capacity = layers * size * size;
-        this.dirty             = new int[capacity];
-        this.nextDirty         = new int[capacity];
-        this.pendingChanges    = new int[capacity];
-        this.activeCells       = new int[capacity];
+        this.dirty             = new long[capacity];
+        this.nextDirty         = new long[capacity];
+        this.pendingChanges    = new long[capacity];
+        this.activeCells       = new long[capacity];
         this.inDirty           = new boolean[layers][size][size];
         this.inNextDirty       = new boolean[layers][size][size];
 
@@ -119,7 +117,7 @@ public class SimulationEngine {
         pendingChangesCount = 0;
 
         for (int i = 0; i < n; i++) {
-            int p = activeCells[i];
+            long p = activeCells[i];
             int layer = unpackLayer(p);
             int x = unpackX(p);
             int y = unpackY(p);
@@ -130,7 +128,7 @@ public class SimulationEngine {
         }
 
         for (int i = 0; i < n; i++) {
-            int p = activeCells[i];
+            long p = activeCells[i];
             int layer = unpackLayer(p);
             int x = unpackX(p);
             int y = unpackY(p);
@@ -213,7 +211,7 @@ public class SimulationEngine {
 
         pendingChangesCount = 0;
         for (int i = 0; i < dirtyCount; i++) {
-            int p = dirty[i];
+            long p = dirty[i];
             int layer = unpackLayer(p);
             int x = unpackX(p);
             int y = unpackY(p);
@@ -228,7 +226,7 @@ public class SimulationEngine {
         dirtyCount = 0;
 
         for (int i = 0; i < pendingChangesCount; i++) {
-            int p = pendingChanges[i];
+            long p = pendingChanges[i];
             int layer = unpackLayer(p);
             int x = unpackX(p);
             int y = unpackY(p);
@@ -247,7 +245,7 @@ public class SimulationEngine {
         }
         pendingChangesCount = 0;
 
-        int[] tmp = dirty;
+        long[] tmp = dirty;
         dirty = nextDirty;
         nextDirty = tmp;
 
