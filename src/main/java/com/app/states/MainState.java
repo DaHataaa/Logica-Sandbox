@@ -69,6 +69,12 @@ public class MainState implements State {
     private int lastPlacedCellX = -1;
     private int lastPlacedCellY = -1;
 
+    // === selecting.wav: состояние питч-механики ===
+    private int lastSelectionSoundWidth = -1;
+    private int lastSelectionSoundHeight = -1;
+    private long lastSelectionSoundNanos = 0;
+    private static final long SELECTION_SOUND_MIN_INTERVAL = 25_000_000L; // 25 мс
+
     private boolean keyboardCursorActive = false;
     private int keyboardCursorX = 0;
     private int keyboardCursorY = 0;
@@ -239,12 +245,11 @@ public class MainState implements State {
         });
     }
 
-    // ===== Логика R =====
     private void handleRAction() {
         if (selecting || previewMode || panning) return;
 
         if (keyboardCursorActive) {
-            removeBlockAtCell(keyboardCursorX, keyboardCursorY);
+            removeBlockAtCell(keyboardCursorX, keyboardCursorY);   // remove.wav
             return;
         }
 
@@ -252,13 +257,12 @@ public class MainState implements State {
             selection.deleteSelected(world, world.getCurrentLayer());
             selection.clear();
             simulationEngine.markWorldChanged();
-            AudioManager.getInstance().playRemove();
+            AudioManager.getInstance().playCopy();   // cut.wav
             requestRender();
             System.out.println("Deleted selected area");
             return;
         }
 
-        // Включаем режим удаления и сразу удаляем под курсором
         deleteMode = true;
         lastDeleteTickNanos = 0;
         deleteTimer.start();
@@ -748,6 +752,18 @@ public class MainState implements State {
                 int minY = Math.min(selectionStartY, endY);
                 int maxY = Math.max(selectionStartY, endY);
 
+                int selW = maxX - minX + 1;
+                int selH = maxY - minY + 1;
+                long nowNs = System.nanoTime();
+                boolean sizeChanged = (selW != lastSelectionSoundWidth
+                        || selH != lastSelectionSoundHeight);
+                if (sizeChanged && nowNs - lastSelectionSoundNanos >= SELECTION_SOUND_MIN_INTERVAL) {
+                    lastSelectionSoundWidth = selW;
+                    lastSelectionSoundHeight = selH;
+                    lastSelectionSoundNanos = nowNs;
+                    AudioManager.getInstance().playSelectingTick(selW, selH);
+                }
+
                 double screenX1 = camera.worldToScreenX(minX * camera.getBaseCellSize());
                 double screenY1 = camera.worldToScreenY(minY * camera.getBaseCellSize());
                 double screenX2 = camera.worldToScreenX((maxX + 1) * camera.getBaseCellSize());
@@ -833,6 +849,11 @@ public class MainState implements State {
                         selectionStartY = (int) Math.floor(worldY / camera.getBaseCellSize());
                     }
                     selection.startSelection(selectionStartX, selectionStartY, world.getCurrentLayer());
+
+                    // Сброс состояния selecting.wav — первое изменение размера сыграет сразу
+                    lastSelectionSoundWidth = -1;
+                    lastSelectionSoundHeight = -1;
+                    lastSelectionSoundNanos = 0;
                 }
                 break;
 
@@ -862,10 +883,12 @@ public class MainState implements State {
                     previewMode = false;
                     selection.clear();
                     Selection.resetClipboard();
+                    AudioManager.getInstance().playDeselect();   // deselect.wav
                     requestRender();
                     System.out.println("Preview mode off, clipboard cleared");
                 } else if (selection.hasSelection()) {
                     selection.clear();
+                    AudioManager.getInstance().playDeselect();   // deselect.wav
                     requestRender();
                 } else {
                     palette.setDirection(Direction.RIGHT);
@@ -877,6 +900,7 @@ public class MainState implements State {
                     selection.cut(world, world.getCurrentLayer());
                     simulationEngine.markWorldChanged();
                     previewMode = true;
+                    AudioManager.getInstance().playCopy();   // cut.wav
                     requestRender();
                     System.out.println("Cut: selection removed, buffer filled, preview mode activated");
                 }
@@ -886,6 +910,7 @@ public class MainState implements State {
                 if (selection.hasSelection() && !previewMode && !selecting) {
                     selection.copyToClipboard();
                     previewMode = true;
+                    AudioManager.getInstance().playCopy();   // copy.wav
                     requestRender();
                     System.out.println("Copy: buffer filled, preview mode activated");
                 }
@@ -905,7 +930,7 @@ public class MainState implements State {
                     }
                     selection.paste(world, world.getCurrentLayer(), px, py);
                     simulationEngine.markWorldChanged();
-                    AudioManager.getInstance().playPlacement();
+                    AudioManager.getInstance().playInsert();   // insert.wav
                     requestRender();
                     System.out.println("Paste done at (" + px + ", " + py + ")");
                 }
@@ -929,6 +954,7 @@ public class MainState implements State {
     public void handleKeyReleased(KeyEvent event) {
         if (event.getCode() == KeyCode.E && selecting) {
             selecting = false;
+
             int endX, endY;
             if (keyboardCursorActive) {
                 endX = keyboardCursorX;
@@ -941,8 +967,14 @@ public class MainState implements State {
             }
             selection.updateSelection(endX, endY);
             selection.finishSelection(world);
+
+            // === select.wav: завершение выделения ===
+            AudioManager.getInstance().playSelect();
+            // === /select.wav ===
+
             requestRender();
-            System.out.println("Selection finished: size " + selection.getWidth() + "x" + selection.getHeight());
+            System.out.println("Selection finished: size "
+                    + selection.getWidth() + "x" + selection.getHeight());
         }
 
         if (event.getCode() == KeyCode.R) {

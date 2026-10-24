@@ -70,11 +70,9 @@ public class Config {
     @SerializedName("ui_click_volume")
     private int uiClickVolume = 100;
 
-    @SerializedName("placement_volume")
-    private int placementVolume = 100;
-
-    @SerializedName("remove_volume")
-    private int removeVolume = 100;
+    // Редактирование мира: placement / remove / copy / insert / deselect / select / selecting
+    @SerializedName("editor_volume")
+    private int editorVolume = 100;
 
     @SerializedName("block_activation_volume")
     private int blockActivationVolume = 80;
@@ -151,10 +149,10 @@ public class Config {
                     // AUDIO
                     this.masterVolume = loaded.masterVolume;
                     this.uiClickVolume = loaded.uiClickVolume;
-                    this.placementVolume = loaded.placementVolume;
-                    this.removeVolume = loaded.removeVolume;
+                    // Старый config.json мог не содержать editorVolume → 0.
+                    // 0 трактуем как "не задано" → 100.
+                    this.editorVolume = (loaded.editorVolume <= 0) ? 100 : loaded.editorVolume;
                     this.blockActivationVolume = loaded.blockActivationVolume;
-
                 }
             } catch (IOException e) {
                 System.err.println("Failed to load config, using defaults: " + e.getMessage());
@@ -193,8 +191,7 @@ public class Config {
 
     public int getMasterVolume() { return masterVolume; }
     public int getUiClickVolume() { return uiClickVolume; }
-    public int getPlacementVolume() { return placementVolume; }
-    public int getRemoveVolume() { return removeVolume; }
+    public int getEditorVolume() { return editorVolume; }
     public int getBlockActivationVolume() { return blockActivationVolume; }
 
     // Setters
@@ -211,8 +208,6 @@ public class Config {
 
     public void setMasterVolume(int masterVolume) { this.masterVolume = masterVolume; }
     public void setUiClickVolume(int uiClickVolume) { this.uiClickVolume = uiClickVolume; }
-    public void setPlacementVolume(int placementVolume) { this.placementVolume = placementVolume; }
-    public void setRemoveVolume(int removeVolume) { this.removeVolume = removeVolume; }
+    public void setEditorVolume(int editorVolume) { this.editorVolume = editorVolume; }
     public void setBlockActivationVolume(int blockActivationVolume) { this.blockActivationVolume = blockActivationVolume; }
-
 }

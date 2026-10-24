@@ -17,8 +17,7 @@
   "layers": 5,
   "current_texturepack": "Classic",
   "master_volume": 100,
-  "ui_click_volume": 82,
-  "placement_volume": 100,
-  "remove_volume": 70,
+  "ui_click_volume": 100,
+  "editor_volume": 100,
   "block_activation_volume": 0
 }

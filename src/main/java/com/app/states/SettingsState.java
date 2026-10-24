@@ -32,7 +32,6 @@ public class SettingsState implements State {
 
     private final Config config;
 
-    // ===== Эталон: BlockPalette.fieldStyle =====
     private static final String FIELD_BASE_STYLE =
             "-fx-font-family: 'Monospace';" +
                     "-fx-font-size: 18px;" +
@@ -67,7 +66,6 @@ public class SettingsState implements State {
         centerPanel.setPadding(new Insets(28));
         centerPanel.setMaxWidth(800);
 
-        // ===== Заголовок — как menu-title =====
         Text title = new Text("SETTINGS");
         title.setFill(Color.web(colors.getGrid()));
         title.setStyle("-fx-fill: " + colors.getGrid() + ";");
@@ -82,7 +80,6 @@ public class SettingsState implements State {
         scrollPane.setPrefWidth(720);
         scrollPane.setPrefHeight(820);
 
-        // ===== BACK — только .button, без inline =====
         Button backBtn = new Button("← BACK");
         backBtn.getStyleClass().add("button");
         backBtn.setOnAction(e -> backToMenu());
@@ -106,9 +103,6 @@ public class SettingsState implements State {
         }
     }
 
-    // ============================================================
-    // ПОСТРОЕНИЕ ГРУПП
-    // ============================================================
     private void buildGroups() {
         groupsContainer.getChildren().clear();
         groupsContainer.getChildren().add(buildGameplayGroup());
@@ -195,23 +189,16 @@ public class SettingsState implements State {
         rows.getChildren().add(separator());
 
         rows.getChildren().add(sliderRow(
-                "UI click volume",
+                "UI volume",
                 config.getUiClickVolume(),
                 config::setUiClickVolume
         ));
         rows.getChildren().add(separator());
 
         rows.getChildren().add(sliderRow(
-                "Placement volume",
-                config.getPlacementVolume(),
-                config::setPlacementVolume
-        ));
-        rows.getChildren().add(separator());
-
-        rows.getChildren().add(sliderRow(
-                "Remove volume",
-                config.getRemoveVolume(),
-                config::setRemoveVolume
+                "Editor volume",
+                config.getEditorVolume(),
+                config::setEditorVolume
         ));
         rows.getChildren().add(separator());
 
@@ -224,21 +211,16 @@ public class SettingsState implements State {
         return group("🔊 AUDIO", rows);
     }
 
-    // ============================================================
-    // ГРУППА / РАЗДЕЛИТЕЛЬ / СТРОКА
-    // ============================================================
     private VBox group(String titleText, VBox rowsContainer) {
         VBox group = new VBox(8);
         group.setAlignment(Pos.TOP_LEFT);
         group.setFillWidth(true);
 
-        // Заголовок группы — 20 bold, grid
         Text title = new Text(titleText);
         title.setFill(Color.web(colors.getGrid()));
         title.setStyle("-fx-fill: " + colors.getGrid() + ";");
         title.setFont(Font.font("Monospaced", FontWeight.BOLD, 20));
 
-        // Рамка группы — border 2, radius 10, bg=background, border=grid
         rowsContainer.setStyle(
                 "-fx-background-color: " + colors.getBackground() + ";" +
                         "-fx-border-color: " + colors.getGrid() + ";" +
@@ -253,7 +235,6 @@ public class SettingsState implements State {
         return group;
     }
 
-    /** Разделитель — как в BlockPalette: Rectangle высота 2, grid. */
     private Rectangle separator() {
         Rectangle sep = new Rectangle(700, 2);
         sep.setFill(Color.web(colors.getGrid()));
@@ -266,7 +247,6 @@ public class SettingsState implements State {
         row.setPadding(new Insets(10, 14, 10, 14));
         row.setStyle("-fx-background-color: " + colors.getBackground() + ";");
 
-        // Лейбл — 14, без bold, grid (как speedLabel/simLabel в BlockPalette)
         Label label = new Label(labelText);
         label.setFont(Font.font("Monospace", 14));
         label.setStyle("-fx-text-fill: " + colors.getGrid() + ";");
@@ -289,7 +269,6 @@ public class SettingsState implements State {
         return row;
     }
 
-    // ---------- Числовое поле ----------
     private interface IntConsumer { void accept(int v); }
     private interface IntFormatter { String format(int v); }
 
@@ -345,7 +324,6 @@ public class SettingsState implements State {
         }
     }
 
-    // ---------- Resolution (ComboBox) ----------
     private HBox resolutionRow() {
         ComboBox<String> combo = new ComboBox<>();
         combo.getItems().addAll(RESOLUTIONS);
@@ -377,7 +355,6 @@ public class SettingsState implements State {
     }
 
     private void styleCombo(ComboBox<String> combo) {
-        // Как поля: 18 без bold, bg=background, fg=arrow, border=grid, radius 5
         combo.setStyle(
                 "-fx-font-family: 'Monospace';" +
                         "-fx-font-size: 18px;" +
@@ -443,7 +420,6 @@ public class SettingsState implements State {
         });
     }
 
-    // ---------- Toggle (как .button) ----------
     private interface BoolConsumer { void accept(boolean v); }
 
     private HBox boolRow(String labelText, boolean initial,
@@ -458,13 +434,11 @@ public class SettingsState implements State {
             styleToggle(toggle, newVal, false);
         });
 
-        // hover — как .button:hover (signalOn/background)
         toggle.setOnMouseEntered(e -> {
             if (!toggle.isPressed()) styleToggle(toggle, isOn(toggle), false, true);
         });
         toggle.setOnMouseExited(e -> styleToggle(toggle, isOn(toggle), false));
 
-        // pressed — как .button:pressed (power/background)
         toggle.setOnMousePressed(e -> styleToggle(toggle, isOn(toggle), true));
         toggle.setOnMouseReleased(e -> {
             if (toggle.isHover()) styleToggle(toggle, isOn(toggle), false, true);
@@ -482,13 +456,6 @@ public class SettingsState implements State {
         styleToggle(toggle, on, pressed, false);
     }
 
-    /**
-     * Стиль toggle по логике .button из StyleManager:
-     *  normal ON:  bg=signalOn, fg=background, border=grid
-     *  normal OFF: bg=background, fg=grid, border=grid
-     *  hover:      bg=signalOn, fg=background
-     *  pressed:    bg=power, fg=background
-     */
     private void styleToggle(Button toggle, boolean on, boolean pressed, boolean hover) {
         String bg;
         String fg;
@@ -523,7 +490,6 @@ public class SettingsState implements State {
         );
     }
 
-    // ---------- Slider ----------
     private HBox sliderRow(String labelText, int initial, IntConsumer apply) {
         Slider slider = new Slider(0, 100, initial);
         slider.setPrefWidth(240);
@@ -614,7 +580,6 @@ public class SettingsState implements State {
     private void styleSlider(Slider slider) {
         slider.setStyle("-fx-control-inner-background: " + colors.getBackground() + ";");
 
-        // Принудительно создаём skin ДО lookup — иначе на первом входе lookup() == null
         slider.applyCss();
         slider.layout();
 
@@ -631,21 +596,18 @@ public class SettingsState implements State {
         }
     }
 
-    // ============================================================
-    // ПОЛЕ ВВОДА — эталон BlockPalette.fieldStyle
-    // ============================================================
     private TextField createField(String initial) {
         TextField field = new TextField(initial);
         field.setPrefWidth(FIELD_WIDTH);
         field.setMaxWidth(FIELD_WIDTH);
-        field.setStyle(fieldStyle(colors.getSignalOn())); // покой = signalOn (как BlockPalette)
+        field.setStyle(fieldStyle(colors.getSignalOn()));
         field.setFocusTraversable(true);
 
         field.focusedProperty().addListener((obs, was, is) -> {
             if (is) {
-                field.setStyle(fieldStyle(colors.getPower()));   // фокус — power (акцент)
+                field.setStyle(fieldStyle(colors.getPower()));
             } else {
-                field.setStyle(fieldStyle(colors.getSignalOn())); // покой — signalOn
+                field.setStyle(fieldStyle(colors.getSignalOn()));
             }
         });
 
@@ -660,7 +622,6 @@ public class SettingsState implements State {
     }
 
     private String fieldStyle(String borderColor) {
-        // Точно как BlockPalette.fieldStyle: fg=arrow, padding 4 6, без bold
         return FIELD_BASE_STYLE +
                 "-fx-background-color: " + colors.getBackground() + ";" +
                 "-fx-text-fill: " + colors.getArrow() + ";" +
@@ -687,9 +648,6 @@ public class SettingsState implements State {
         return String.valueOf(v);
     }
 
-    // ============================================================
-    // State
-    // ============================================================
     private void backToMenu() {
         config.save();
         AudioManager.getInstance().refreshVolumes();
