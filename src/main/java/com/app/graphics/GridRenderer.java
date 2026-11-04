@@ -260,7 +260,7 @@ public class GridRenderer {
         gc.setStroke(gridColor);
 
         if (cellScreenSize >= 10) {
-            gc.setLineWidth(1.2);
+            gc.setLineWidth(1);
             gc.beginPath();
             for (int x = startX; x <= endX; x++) {
                 double screenX = camera.worldToScreenX(x * baseCellSize);
