@@ -289,13 +289,12 @@ public class GridRenderer {
     }
 
     private void renderTextBlocks(int layer, int startX, int startY, int endX, int endY, int cellScreenSize) {
-        // <<< TINY: на крошечных клетках текст не рисуем вообще
         if (cellScreenSize <= TINY_CELL_THRESHOLD) return;
 
-        int textStartX = Math.max(0, startX - 16);
-        int textStartY = Math.max(0, startY);
-        int textEndX = Math.min(worldSizeCells, endX + 16);
-        int textEndY = Math.min(worldSizeCells, endY);
+        int textStartX = 0;
+        int textStartY = 0;
+        int textEndX = worldSizeCells;
+        int textEndY = worldSizeCells;
 
         double fontSize = Math.max(6.0, cellScreenSize / 1);
         gc.setFont(getTextFont(fontSize));
@@ -317,7 +316,6 @@ public class GridRenderer {
 
                 int len = text.length();
 
-                // Каждый символ — от своей world-координаты (без накопления)
                 double cellScreenY = camera.worldToScreenY(y * baseCellSize);
 
                 for (int c = 0; c < len; c++) {
