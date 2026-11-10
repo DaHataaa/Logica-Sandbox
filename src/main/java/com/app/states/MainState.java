@@ -8,6 +8,7 @@ import com.app.core.World;
 import com.app.core.SimulationEngine;
 import com.app.core.Selection;
 import com.app.core.MapManager;
+import com.app.core.UndoManager;
 import com.app.graphics.Camera;
 import com.app.graphics.CameraFollower;
 import com.app.graphics.GridRenderer;
@@ -41,6 +42,7 @@ public class MainState implements State {
     private BlockPalette palette;
     private SimulationEngine simulationEngine;
     private Selection selection;
+    private UndoManager undoManager;
 
     private String currentMapName;
 
@@ -113,6 +115,7 @@ public class MainState implements State {
         this.palette = new BlockPalette();
         this.simulationEngine = new SimulationEngine(world);
         this.selection = new Selection();
+        this.undoManager = new UndoManager(world);
 
         ColorConfig colors = SpriteManager.getInstance().getColors();
         this.powerColor = colors.getPower();
@@ -245,6 +248,44 @@ public class MainState implements State {
         });
     }
 
+    // ============================================================
+    // UNDO / REDO helpers
+    // ============================================================
+
+    /**
+     * Меняет одну клетку через undo-менеджер.
+     * Записывает точную пару (oldBlock/oldSignal -> newBlock/newSignal).
+     */
+    private void changeCellWithUndo(int layer, int x, int y,
+                                    String newBlock,
+                                    String stepLabel) {
+        if (!isValidCell(x, y)) return;
+
+        String oldBlock = world.getBlock(layer, x, y);
+        boolean oldSignal = world.getSignal(layer, x, y);
+
+        if (oldBlock == null) oldBlock = "0";
+        if (newBlock == null || newBlock.isEmpty()) newBlock = "0";
+
+        if (oldBlock.equals(newBlock)) return;
+
+        // Меняем мир, затем пишем дельту (сигнал newSignal берём после setBlock)
+        world.setBlock(layer, x, y, newBlock);
+        boolean newSignal = world.getSignal(layer, x, y);
+
+        // Если блок не установился (например, невалидный тип) — setBlock оставит "0"
+        String actualNew = world.getBlock(layer, x, y);
+        if (actualNew == null) actualNew = "0";
+
+        undoManager.beginStep(stepLabel);
+        undoManager.recordChange(layer, x, y, oldBlock, actualNew, oldSignal, newSignal);
+        undoManager.commitStep();
+    }
+
+    // ============================================================
+    // ACTIONS
+    // ============================================================
+
     private void handleRAction() {
         if (selecting || previewMode || panning) return;
 
@@ -254,7 +295,7 @@ public class MainState implements State {
         }
 
         if (selection.hasSelection()) {
-            selection.deleteSelected(world, world.getCurrentLayer());
+            deleteSelectionWithUndo();
             selection.clear();
             simulationEngine.markWorldChanged();
             AudioManager.getInstance().playCopy();   // cut.wav
@@ -267,6 +308,58 @@ public class MainState implements State {
         lastDeleteTickNanos = 0;
         deleteTimer.start();
         removeBlockAtSceneCoords(lastSceneMouseX, lastSceneMouseY);
+    }
+
+    /** Удаляет выделение одним undo-шагом. */
+    private void deleteSelectionWithUndo() {
+        int layer = world.getCurrentLayer();
+        int minX = Math.min(selection.getStartX(), selection.getEndX());
+        int maxX = Math.max(selection.getStartX(), selection.getEndX());
+        int minY = Math.min(selection.getStartY(), selection.getEndY());
+        int maxY = Math.max(selection.getStartY(), selection.getEndY());
+
+        undoManager.beginStep("delete-selection");
+
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                if (!isValidCell(x, y)) continue;
+                String oldBlock = world.getBlock(layer, x, y);
+                if (oldBlock == null || oldBlock.equals("0")) continue;
+                boolean oldSignal = world.getSignal(layer, x, y);
+                world.removeBlock(layer, x, y);
+                world.setSignal(layer, x, y, false);
+                undoManager.recordChange(layer, x, y, oldBlock, "0", oldSignal, false);
+            }
+        }
+
+        undoManager.commitStep();
+    }
+
+    /** Вырезание выделения одним undo-шагом (с копированием в буфер). */
+    private void cutSelectionWithUndo() {
+        selection.copyToClipboard();
+
+        int layer = world.getCurrentLayer();
+        int minX = Math.min(selection.getStartX(), selection.getEndX());
+        int maxX = Math.max(selection.getStartX(), selection.getEndX());
+        int minY = Math.min(selection.getStartY(), selection.getEndY());
+        int maxY = Math.max(selection.getStartY(), selection.getEndY());
+
+        undoManager.beginStep("cut");
+
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                if (!isValidCell(x, y)) continue;
+                String oldBlock = world.getBlock(layer, x, y);
+                if (oldBlock == null || oldBlock.equals("0")) continue;
+                boolean oldSignal = world.getSignal(layer, x, y);
+                world.removeBlock(layer, x, y);
+                world.setSignal(layer, x, y, false);
+                undoManager.recordChange(layer, x, y, oldBlock, "0", oldSignal, false);
+            }
+        }
+
+        undoManager.commitStep();
     }
 
     private void handleKeyboardCursorMove(KeyCode code) {
@@ -366,7 +459,18 @@ public class MainState implements State {
                 TextEditorDialog.show(owner, currentTrue, currentFalse);
 
         if (result != null) {
+            String oldBlock = world.getBlock(layer, cellX, cellY);
+            boolean oldSignal = world.getSignal(layer, cellX, cellY);
+
             world.setBlockTexts(layer, cellX, cellY, result.trueText, result.falseText);
+
+            String newBlock = world.getBlock(layer, cellX, cellY);
+            boolean newSignal = world.getSignal(layer, cellX, cellY);
+
+            undoManager.beginStep("edit-text");
+            undoManager.recordChange(layer, cellX, cellY, oldBlock, newBlock, oldSignal, newSignal);
+            undoManager.commitStep();
+
             requestRender();
             System.out.println("Text block updated at (" + cellX + ", " + cellY
                     + "): TRUE=\"" + result.trueText + "\" FALSE=\"" + result.falseText + "\"");
@@ -386,7 +490,7 @@ public class MainState implements State {
             blockStr += "_f" + dir.getCode();
         }
 
-        world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
+        changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, blockStr, "place");
         simulationEngine.markWorldChanged();
         AudioManager.getInstance().playPlacement();
         System.out.println("Placed (F): " + blockStr + " at (" + cellX + ", " + cellY
@@ -398,7 +502,7 @@ public class MainState implements State {
         if (!isValidCell(cellX, cellY)) return;
         String block = world.getBlock(world.getCurrentLayer(), cellX, cellY);
         if (block != null && !block.equals("0")) {
-            world.removeBlock(world.getCurrentLayer(), cellX, cellY);
+            changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, "0", "remove");
             simulationEngine.markWorldChanged();
             AudioManager.getInstance().playRemove();
             System.out.println("Removed (kb) at (" + cellX + ", " + cellY + ")");
@@ -499,7 +603,8 @@ public class MainState implements State {
             lastPlacedCellX = cellX;
             lastPlacedCellY = cellY;
 
-            if (world.blockTypes[world.getCurrentLayer()][cellY][cellX] == World.TYPE_TEXT) return;
+            int layer = world.getCurrentLayer();
+            if (world.blockTypes[layer][cellY][cellX] == World.TYPE_TEXT) return;
 
             BlockType type = palette.getSelectedBlock();
             Direction dir = palette.getCurrentDirection();
@@ -509,10 +614,10 @@ public class MainState implements State {
                 blockStr += "_f" + dir.getCode();
             }
 
-            world.setBlock(world.getCurrentLayer(), cellX, cellY, blockStr);
+            changeCellWithUndo(layer, cellX, cellY, blockStr, "place");
             simulationEngine.markWorldChanged();
             AudioManager.getInstance().playPlacement();
-            System.out.println("Placed: " + blockStr + " at (" + cellX + ", " + cellY + ") on layer " + world.getCurrentLayer());
+            System.out.println("Placed: " + blockStr + " at (" + cellX + ", " + cellY + ") on layer " + layer);
             requestRender();
         } else {
             lastPlacedCellX = -1;
@@ -546,7 +651,7 @@ public class MainState implements State {
         if (cellX >= 0 && cellX < world.getSize() && cellY >= 0 && cellY < world.getSize()) {
             String block = world.getBlock(world.getCurrentLayer(), cellX, cellY);
             if (block != null && !block.equals("0")) {
-                world.removeBlock(world.getCurrentLayer(), cellX, cellY);
+                changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, "0", "remove");
                 simulationEngine.markWorldChanged();
                 AudioManager.getInstance().playRemove();
                 System.out.println("Removed at (" + cellX + ", " + cellY + ")");
@@ -801,14 +906,37 @@ public class MainState implements State {
     @Override
     public void handleKeyPressed(KeyEvent event) {
         if (event.isControlDown()) {
+            KeyCode code = event.getCode();
+
+            // ===== UNDO / REDO =====
+            if (code == KeyCode.Z) {
+                if (event.isShiftDown()) {
+                    if (undoManager.redo()) {
+                        simulationEngine.markWorldChanged();
+                        AudioManager.getInstance().playInsert();
+                        requestRender();
+                        System.out.println("Redo");
+                    }
+                } else {
+                    if (undoManager.undo()) {
+                        simulationEngine.markWorldChanged();
+                        AudioManager.getInstance().playRemove();
+                        requestRender();
+                        System.out.println("Undo");
+                    }
+                }
+                event.consume();
+                return;
+            }
+
             if (event.isShiftDown()) {
-                if (event.getCode() == KeyCode.S) {
+                if (code == KeyCode.S) {
                     saveAsMap();
                     event.consume();
                     return;
                 }
             } else {
-                if (event.getCode() == KeyCode.S) {
+                if (code == KeyCode.S) {
                     saveMap();
                     event.consume();
                     return;
@@ -897,7 +1025,7 @@ public class MainState implements State {
 
             case X:
                 if (selection.hasSelection() && !previewMode && !selecting) {
-                    selection.cut(world, world.getCurrentLayer());
+                    cutSelectionWithUndo();
                     simulationEngine.markWorldChanged();
                     previewMode = true;
                     AudioManager.getInstance().playCopy();   // cut.wav
@@ -928,7 +1056,7 @@ public class MainState implements State {
                         px = (int) Math.floor(worldX / camera.getBaseCellSize());
                         py = (int) Math.floor(worldY / camera.getBaseCellSize());
                     }
-                    selection.paste(world, world.getCurrentLayer(), px, py);
+                    pasteWithUndo(px, py);
                     simulationEngine.markWorldChanged();
                     AudioManager.getInstance().playInsert();   // insert.wav
                     requestRender();
@@ -948,6 +1076,39 @@ public class MainState implements State {
             case DIGIT0: palette.setSelectedIndex(9); break;
             default: break;
         }
+    }
+
+    /** Вставка из буфера одним undo-шагом. */
+    private void pasteWithUndo(int px, int py) {
+        List<List<String>> clip = Selection.getClipboardBlocks();
+        if (clip.isEmpty()) return;
+
+        int h = clip.size();
+        int w = clip.get(0).size();
+        int layer = world.getCurrentLayer();
+
+        undoManager.beginStep("paste");
+
+        for (int dy = 0; dy < h; dy++) {
+            for (int dx = 0; dx < w; dx++) {
+                int x = px + dx;
+                int y = py + dy;
+                if (!isValidCell(x, y)) continue;
+
+                String nb = clip.get(dy).get(dx);
+                if (nb == null || nb.equals("0")) continue;
+
+                String ob = world.getBlock(layer, x, y);
+                boolean os = world.getSignal(layer, x, y);
+
+                world.setBlock(layer, x, y, nb);
+                boolean ns = world.getSignal(layer, x, y);
+
+                undoManager.recordChange(layer, x, y, ob, nb, os, ns);
+            }
+        }
+
+        undoManager.commitStep();
     }
 
     @Override

@@ -351,7 +351,7 @@ public class SettingsState implements State {
             }
         });
 
-        return rowBase("Resolution", combo, true);
+        return rowBase("Startup resolution", combo, true);
     }
 
     private void styleCombo(ComboBox<String> combo) {
