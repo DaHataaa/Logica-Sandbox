@@ -247,16 +247,14 @@ public class AudioManager {
         double master = clamp01(cfg.getMasterVolume() / 100.0);
         double uiClick = clamp01(cfg.getUiClickVolume() / 100.0);
         double editor = clamp01(cfg.getEditorVolume() / 100.0);
-        double blockActivation = clamp01(cfg.getBlockActivationVolume() / 100.0);
 
         masterMuted = (master <= 0.0);
         uiClickMuted = masterMuted || (uiClick <= 0.0);
         editorMuted = masterMuted || (editor <= 0.0);
-        blockActivationMuted = masterMuted || (blockActivation <= 0.0);
 
         for (Map.Entry<String, AudioClip> e : clips.entrySet()) {
             String name = e.getKey();
-            double category = categoryVolume(name, uiClick, editor, blockActivation);
+            double category = categoryVolume(name, uiClick, editor);
             double gain = normalizationGains.getOrDefault(name, 1.0);
             e.getValue().setVolume(clamp01(master * category * gain));
         }
@@ -270,8 +268,7 @@ public class AudioManager {
 
     private static double categoryVolume(String name,
                                          double uiClick,
-                                         double editor,
-                                         double blockActivation) {
+                                         double editor) {
         switch (name) {
             case "button":
                 return uiClick;
@@ -284,7 +281,7 @@ public class AudioManager {
             case "selecting":
                 return editor;
             default:
-                return blockActivation;
+                return 0;
         }
     }
 

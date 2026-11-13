@@ -203,12 +203,6 @@ public class SettingsState implements State {
         ));
         rows.getChildren().add(separator());
 
-        rows.getChildren().add(sliderRow(
-                "Block activation volume",
-                config.getBlockActivationVolume(),
-                config::setBlockActivationVolume
-        ));
-
         return group("🔊 AUDIO", rows);
     }
 

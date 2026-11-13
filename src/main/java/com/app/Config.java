@@ -73,9 +73,6 @@ public class Config {
     @SerializedName("editor_volume")
     private int editorVolume = 100;
 
-    @SerializedName("block_activation_volume")
-    private int blockActivationVolume = 80;
-
     // === DEBUG ===
     @SerializedName("debug_overlay")
     private boolean debugOverlay = false;
@@ -159,7 +156,6 @@ public class Config {
                     this.masterVolume = loaded.masterVolume;
                     this.uiClickVolume = loaded.uiClickVolume;
                     this.editorVolume = (loaded.editorVolume <= 0) ? 100 : loaded.editorVolume;
-                    this.blockActivationVolume = loaded.blockActivationVolume;
 
                     // === DEBUG ===
                     this.debugOverlay = loaded.debugOverlay;
@@ -204,7 +200,6 @@ public class Config {
     public int getMasterVolume() { return masterVolume; }
     public int getUiClickVolume() { return uiClickVolume; }
     public int getEditorVolume() { return editorVolume; }
-    public int getBlockActivationVolume() { return blockActivationVolume; }
 
     // === DEBUG ===
     public boolean isDebugOverlay() { return debugOverlay; }
@@ -226,7 +221,6 @@ public class Config {
     public void setMasterVolume(int masterVolume) { this.masterVolume = masterVolume; }
     public void setUiClickVolume(int uiClickVolume) { this.uiClickVolume = uiClickVolume; }
     public void setEditorVolume(int editorVolume) { this.editorVolume = editorVolume; }
-    public void setBlockActivationVolume(int blockActivationVolume) { this.blockActivationVolume = blockActivationVolume; }
 
     // === DEBUG ===
     public void setDebugOverlay(boolean debugOverlay) { this.debugOverlay = debugOverlay; }
