@@ -27,7 +27,7 @@ public class SimulationEngine {
     private static int unpackX(long p) { return (int) p & 0xFFFF; }
 
     private long[] dirty;
-    private long dirtyCount = 0;
+    private int dirtyCount = 0;
     private boolean[][][] inDirty;
 
     private long[] nextDirty;
@@ -46,12 +46,55 @@ public class SimulationEngine {
     private final AtomicBoolean isPaused = new AtomicBoolean(false);
     private final AtomicBoolean unlimitedSpeed = new AtomicBoolean(false);
 
-    private final AtomicInteger tickCounter = new AtomicInteger(0);
+    private volatile int tickCounter = 0;
     private volatile int actualTps = 0;
     private volatile double tpsSmoothed = 0;
     private volatile long lastTpsUpdateNanos = 0;
     private Thread tpsThread;
     private volatile boolean tpsThreadRunning = false;
+
+    // === DEBUG: профилирование TPS ===
+    private static final int TICK_HISTORY = 60;
+    private volatile int tickSampleEvery = 10;
+    private volatile int avgWindow       = 100;
+
+    private final long[] tickNanosHistory = new long[TICK_HISTORY];
+    private volatile int tickHistoryPos = 0;
+    private volatile int tickHistoryCount = 0;
+
+    private volatile long lastTickNanos = 0L;
+    private volatile int  lastDirtyCount = 0;
+    private volatile int  lastPendingChangesCount = 0;
+
+    private volatile long lastRebuildNanos   = 0L;
+    private volatile long lastPhase1Nanos    = 0L;
+    private volatile long lastPhase2Nanos    = 0L;
+    private volatile long lastPropagateNanos = 0L;
+
+    private volatile int lastRebuildCells   = 0;
+    private volatile int lastPropagateCalls = 0;
+
+    // === агрегаты за окно avgWindow сэмплов ===
+    private volatile long aggRebuildNs, aggPhase1Ns, aggPhase2Ns, aggPropagateNs;
+    private volatile long aggMinTickNs, aggMaxTickNs;
+    private volatile long aggTickSumNs;
+    private volatile int  aggDirtySum, aggActiveSum, aggChangesSum, aggPropsSum;
+    private volatile int  aggRebuildCellsMax;
+    private volatile int  aggSampleCount;
+
+    // «снимок» для оверлея — обновляется раз в avgWindow сэмплов
+    private volatile long snapAvgTickNs, snapMinTickNs, snapMaxTickNs;
+    private volatile long snapAvgRebuildNs, snapAvgPhase1Ns, snapAvgPhase2Ns;
+    private volatile long snapAvgPropagateNs;
+    private volatile int  snapAvgDirty, snapAvgActive, snapAvgChanges, snapAvgProps;
+    private volatile int  snapRebuildCellsMax;
+    private volatile int  snapProgressDone, snapProgressTotal;
+
+    private long tickSampleCounter = 0;
+    private boolean samplingThisTick = false;
+    private int propagateCallsThisTick = 0;
+
+    private volatile boolean tickProfiling = false;
 
     private Thread simThread;
     private volatile boolean simThreadRunning = false;
@@ -84,7 +127,6 @@ public class SimulationEngine {
         startSimThread();
         startTpsCounter();
     }
-
 
     public void markWorldChanged() {
         activeCellsDirty = true;
@@ -201,14 +243,33 @@ public class SimulationEngine {
     }
 
     private void simulateTick() {
+        boolean prof = samplingThisTick;
+
+        long tRebuild = 0, tPhase1 = 0, tPhase2 = 0, tProp = 0;
+        int rebuildCells = 0;
+
         if (activeCellsDirty) {
+            long t0 = prof ? System.nanoTime() : 0L;
             rebuild();
+            if (prof) tRebuild = System.nanoTime() - t0;
+            rebuildCells = activeCellsCount;
         }
 
         if (dirtyCount == 0) {
+            lastPendingChangesCount = 0;
+            lastRebuildCells = rebuildCells;
+            if (prof) {
+                lastRebuildNanos   = tRebuild;
+                lastPhase1Nanos    = 0;
+                lastPhase2Nanos    = 0;
+                lastPropagateNanos = 0;
+                lastPropagateCalls = 0;
+            }
             return;
         }
 
+        // ===== ФАЗА 1 =====
+        long t1 = prof ? System.nanoTime() : 0L;
         pendingChangesCount = 0;
         for (int i = 0; i < dirtyCount; i++) {
             long p = dirty[i];
@@ -224,8 +285,15 @@ public class SimulationEngine {
             }
         }
         dirtyCount = 0;
+        if (prof) tPhase1 = System.nanoTime() - t1;
 
-        for (int i = 0; i < pendingChangesCount; i++) {
+        // ===== ФАЗА 2 =====
+        long t2 = prof ? System.nanoTime() : 0L;
+        long propAcc = 0;
+        propagateCallsThisTick = 0;
+
+        int pc = pendingChangesCount;
+        for (int i = 0; i < pc; i++) {
             long p = pendingChanges[i];
             int layer = unpackLayer(p);
             int x = unpackX(p);
@@ -235,14 +303,20 @@ public class SimulationEngine {
             worldSignals[layer][y][x] = newState;
             worldBlockStates[layer][y][x] = newState;
 
-            if (newState) {
-                com.app.audio.AudioManager.getInstance()
-                        .playSignal(worldBlockTypes[layer][y][x]);
-            }
-
             int delta = newState ? +1 : -1;
-            propagateChange(layer, x, y, delta);
+            if (prof) {
+                long tp = System.nanoTime();
+                propagateChange(layer, x, y, delta);
+                propAcc += System.nanoTime() - tp;
+            } else {
+                propagateChange(layer, x, y, delta);
+            }
         }
+        if (prof) tPhase2 = System.nanoTime() - t2;
+
+        lastPendingChangesCount = pendingChangesCount;
+        lastRebuildCells = rebuildCells;
+        lastPropagateCalls = propagateCallsThisTick;
         pendingChangesCount = 0;
 
         long[] tmp = dirty;
@@ -255,10 +329,18 @@ public class SimulationEngine {
 
         dirtyCount = nextDirtyCount;
         nextDirtyCount = 0;
+
+        if (prof) {
+            lastRebuildNanos   = tRebuild;
+            lastPhase1Nanos    = tPhase1;
+            lastPhase2Nanos    = tPhase2;
+            lastPropagateNanos = propAcc;
+        }
     }
 
     private boolean computeNextState(int layer, int x, int y) {
-        int type = worldBlockTypes[layer][y][x];
+        int[] typeRow = worldBlockTypes[layer][y];
+        int type = typeRow[x];
         if (type == World.TYPE_EMPTY) return false;
         if (type == World.TYPE_POWER) return true;
 
@@ -289,8 +371,11 @@ public class SimulationEngine {
     }
 
     private void propagateChange(int layer, int x, int y, int delta) {
-        int type = worldBlockTypes[layer][y][x];
-        int dirIndex = worldBlockDirs[layer][y][x];
+        int[][] typeLayer = worldBlockTypes[layer];
+        int[][] dirLayer  = worldBlockDirs[layer];
+
+        int type = typeLayer[y][x];
+        int dirIndex = dirLayer[y][x];
 
         switch (type) {
             case World.TYPE_ARROW, World.TYPE_AND, World.TYPE_OR,
@@ -311,32 +396,34 @@ public class SimulationEngine {
         }
 
         if (y > 0
-                && worldBlockTypes[layer][y-1][x] == World.TYPE_GETTER
-                && worldBlockDirs[layer][y-1][x] == 0) {
+                && typeLayer[y-1][x] == World.TYPE_GETTER
+                && dirLayer[y-1][x] == 0) {
             applyDelta(layer, x, y-1, delta);
             if (y-2 >= 0) applyDelta(layer, x, y-2, delta);
         }
         if (x+1 < size
-                && worldBlockTypes[layer][y][x+1] == World.TYPE_GETTER
-                && worldBlockDirs[layer][y][x+1] == 1) {
+                && typeLayer[y][x+1] == World.TYPE_GETTER
+                && dirLayer[y][x+1] == 1) {
             applyDelta(layer, x+1, y, delta);
             if (x+2 < size) applyDelta(layer, x+2, y, delta);
         }
         if (y+1 < size
-                && worldBlockTypes[layer][y+1][x] == World.TYPE_GETTER
-                && worldBlockDirs[layer][y+1][x] == 2) {
+                && typeLayer[y+1][x] == World.TYPE_GETTER
+                && dirLayer[y+1][x] == 2) {
             applyDelta(layer, x, y+1, delta);
             if (y+2 < size) applyDelta(layer, x, y+2, delta);
         }
         if (x > 0
-                && worldBlockTypes[layer][y][x-1] == World.TYPE_GETTER
-                && worldBlockDirs[layer][y][x-1] == 3) {
+                && typeLayer[y][x-1] == World.TYPE_GETTER
+                && dirLayer[y][x-1] == 3) {
             applyDelta(layer, x-1, y, delta);
             if (x-2 >= 0) applyDelta(layer, x-2, y, delta);
         }
     }
 
     private void applyDelta(int layer, int x, int y, int delta) {
+        propagateCallsThisTick++;
+
         int oldNs = ns[layer][y][x];
         int newNs = oldNs + delta;
         ns[layer][y][x] = newNs;
@@ -395,13 +482,139 @@ public class SimulationEngine {
     }
 
     private void tickOnce() {
-        simulateTick();
-        int tick = tickCounter.incrementAndGet();
+        int every = tickSampleEvery;
+        if (every < 1) every = 1;
 
+        samplingThisTick = tickProfiling
+                && (tickSampleCounter++ % every) == 0;
+
+        long t0 = samplingThisTick ? System.nanoTime() : 0L;
+        int dirtyBefore = dirtyCount;
+        simulateTick();
+        lastDirtyCount = dirtyBefore;
+
+        if (samplingThisTick) {
+            long dt = System.nanoTime() - t0;
+            lastTickNanos = dt;
+
+            int pos = tickHistoryPos;
+            tickNanosHistory[pos] = dt;
+            if (++pos >= TICK_HISTORY) pos = 0;
+            tickHistoryPos = pos;
+            if (tickHistoryCount < TICK_HISTORY) tickHistoryCount++;
+
+            accumulateSample(dt);
+        }
+
+        tickCounter++;
 
         if (onTickComplete != null) {
             javafx.application.Platform.runLater(onTickComplete);
         }
+    }
+
+    private void accumulateSample(long tickNs) {
+        int window = avgWindow;
+        if (window < 1) window = 1;
+
+        aggTickSumNs   += tickNs;
+        aggRebuildNs   += lastRebuildNanos;
+        aggPhase1Ns    += lastPhase1Nanos;
+        aggPhase2Ns    += lastPhase2Nanos;
+        aggPropagateNs += lastPropagateNanos;
+
+        if (aggSampleCount == 0) {
+            aggMinTickNs = tickNs;
+            aggMaxTickNs = tickNs;
+        } else {
+            if (tickNs < aggMinTickNs) aggMinTickNs = tickNs;
+            if (tickNs > aggMaxTickNs) aggMaxTickNs = tickNs;
+        }
+
+        aggDirtySum   += lastDirtyCount;
+        aggActiveSum  += activeCellsCount;
+        aggChangesSum += lastPendingChangesCount;
+        aggPropsSum   += lastPropagateCalls;
+
+        if (lastRebuildCells > aggRebuildCellsMax) {
+            aggRebuildCellsMax = lastRebuildCells;
+        }
+
+        aggSampleCount++;
+
+        if (aggSampleCount >= window) {
+            int n = aggSampleCount;
+
+            snapAvgTickNs      = aggTickSumNs / n;
+            snapMinTickNs      = aggMinTickNs;
+            snapMaxTickNs      = aggMaxTickNs;
+            snapAvgRebuildNs   = aggRebuildNs / n;
+            snapAvgPhase1Ns    = aggPhase1Ns / n;
+            snapAvgPhase2Ns    = aggPhase2Ns / n;
+            snapAvgPropagateNs = aggPropagateNs / n;
+            snapAvgDirty       = aggDirtySum / n;
+            snapAvgActive      = aggActiveSum / n;
+            snapAvgChanges     = aggChangesSum / n;
+            snapAvgProps       = aggPropsSum / n;
+            snapRebuildCellsMax = aggRebuildCellsMax;
+            snapProgressDone   = n;
+            snapProgressTotal  = window;
+
+            aggTickSumNs = aggRebuildNs = aggPhase1Ns = aggPhase2Ns = 0;
+            aggPropagateNs = 0;
+            aggMinTickNs = aggMaxTickNs = 0;
+            aggDirtySum = aggActiveSum = aggChangesSum = aggPropsSum = 0;
+            aggRebuildCellsMax = 0;
+            aggSampleCount = 0;
+        }
+
+        snapProgressDone  = aggSampleCount;
+        snapProgressTotal = window;
+    }
+
+    public void setTickProfiling(boolean enabled) {
+        this.tickProfiling = enabled;
+        if (!enabled) resetDebugAggregates();
+    }
+
+    public void setTickSampleEvery(int every) {
+        if (every < 1) every = 1;
+        this.tickSampleEvery = every;
+    }
+
+    public void setAvgWindow(int window) {
+        if (window < 1) window = 1;
+        this.avgWindow = window;
+        resetDebugAggregates();
+    }
+
+    public int getTickSampleEvery() { return tickSampleEvery; }
+    public int getAvgWindow()       { return avgWindow; }
+
+    private void resetDebugAggregates() {
+        tickHistoryCount = 0;
+        tickHistoryPos = 0;
+        lastTickNanos = 0L;
+        lastRebuildNanos = lastPhase1Nanos = lastPhase2Nanos = 0L;
+        lastPropagateNanos = 0L;
+        lastRebuildCells = 0;
+        lastPropagateCalls = 0;
+
+        aggTickSumNs = aggRebuildNs = aggPhase1Ns = aggPhase2Ns = 0;
+        aggPropagateNs = 0;
+        aggMinTickNs = aggMaxTickNs = 0;
+        aggDirtySum = aggActiveSum = aggChangesSum = aggPropsSum = 0;
+        aggRebuildCellsMax = 0;
+        aggSampleCount = 0;
+
+        snapAvgTickNs = snapMinTickNs = snapMaxTickNs = 0;
+        snapAvgRebuildNs = snapAvgPhase1Ns = snapAvgPhase2Ns = 0;
+        snapAvgPropagateNs = 0;
+        snapAvgDirty = snapAvgActive = snapAvgChanges = snapAvgProps = 0;
+        snapRebuildCellsMax = 0;
+        snapProgressDone = snapProgressTotal = 0;
+
+        java.util.Arrays.fill(tickNanosHistory, 0L);
     }
 
     public void setUnlimitedSpeed(boolean unlimited) {
@@ -516,7 +729,8 @@ public class SimulationEngine {
                 lastTpsUpdateNanos = now;
                 if (elapsedSec <= 0.001) continue;
 
-                int ticks = tickCounter.getAndSet(0);
+                int ticks = tickCounter;
+                tickCounter = 0;
                 double instantaneous = ticks / elapsedSec;
 
                 if (!isRunning.get() || isPaused.get() || intervalNanos == 0) {
@@ -544,6 +758,35 @@ public class SimulationEngine {
     }
 
     public int getActualTps() { return actualTps; }
+
+    // === DEBUG: «живые» метрики последнего сэмпла ===
+    public int getDirtyCount()          { return lastDirtyCount; }
+    public int getActiveCellsCount()    { return activeCellsCount; }
+    public int getPendingChangesCount() { return lastPendingChangesCount; }
+    public int getLastPropagateCalls()  { return lastPropagateCalls; }
+    public int getLastRebuildCells()    { return lastRebuildCells; }
+
+    public double getLastTickNs() { return lastTickNanos; }
+    public double getRebuildNs()  { return lastRebuildNanos; }
+    public double getPhase1Ns()   { return lastPhase1Nanos; }
+    public double getPhase2Ns()   { return lastPhase2Nanos; }
+    public double getPropagateNs(){ return lastPropagateNanos; }
+
+    // === DEBUG: агрегаты окна ===
+    public double getSnapAvgTickNs()       { return snapAvgTickNs; }
+    public double getSnapMinTickNs()       { return snapMinTickNs; }
+    public double getSnapMaxTickNs()       { return snapMaxTickNs; }
+    public double getSnapAvgRebuildNs()    { return snapAvgRebuildNs; }
+    public double getSnapAvgPhase1Ns()     { return snapAvgPhase1Ns; }
+    public double getSnapAvgPhase2Ns()     { return snapAvgPhase2Ns; }
+    public double getSnapAvgPropagateNs()  { return snapAvgPropagateNs; }
+    public int getSnapAvgDirty()           { return snapAvgDirty; }
+    public int getSnapAvgActive()          { return snapAvgActive; }
+    public int getSnapAvgChanges()         { return snapAvgChanges; }
+    public int getSnapAvgProps()           { return snapAvgProps; }
+    public int getSnapRebuildCellsMax()    { return snapRebuildCellsMax; }
+    public int getSnapProgressDone()       { return snapProgressDone; }
+    public int getSnapProgressTotal()      { return snapProgressTotal; }
 
     public void forceStop() {
         stop();

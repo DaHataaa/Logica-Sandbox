@@ -27,6 +27,8 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.paint.Color;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.stage.Stage;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
 
 import java.util.List;
 import java.util.Optional;
@@ -63,19 +65,17 @@ public class MainState implements State {
 
     private boolean deleteMode = false;
 
-    // ===== Таймер удаления =====
     private AnimationTimer deleteTimer;
     private long lastDeleteTickNanos = 0;
-    private static final long DELETE_INTERVAL_NANOS = 10_000_000L; // 10 мс — почти каждый кадр
+    private static final long DELETE_INTERVAL_NANOS = 10_000_000L;
 
     private int lastPlacedCellX = -1;
     private int lastPlacedCellY = -1;
 
-    // === selecting.wav: состояние питч-механики ===
     private int lastSelectionSoundWidth = -1;
     private int lastSelectionSoundHeight = -1;
     private long lastSelectionSoundNanos = 0;
-    private static final long SELECTION_SOUND_MIN_INTERVAL = 25_000_000L; // 25 мс
+    private static final long SELECTION_SOUND_MIN_INTERVAL = 25_000_000L;
 
     private boolean keyboardCursorActive = false;
     private int keyboardCursorX = 0;
@@ -88,6 +88,14 @@ public class MainState implements State {
     private long lastFrameNanos = 0;
 
     private boolean filterInstalled = false;
+
+    // === DEBUG ===
+    private boolean debugOverlay = false;
+    private long lastDebugUpdateNanos = 0;
+    private static final long DEBUG_UPDATE_INTERVAL_NANOS = 250_000_000L;
+    private String[] debugLines = new String[5];
+    private double debugBoxW = 640;
+    private double debugBoxH = 240;
 
     public MainState() {
         this(null);
@@ -157,6 +165,12 @@ public class MainState implements State {
             }
         });
 
+        // === DEBUG ===
+        this.debugOverlay = Config.getInstance().isDebugOverlay();
+        simulationEngine.setTickProfiling(debugOverlay);
+        simulationEngine.setTickSampleEvery(Config.getInstance().getDebugSampleEvery());
+        simulationEngine.setAvgWindow(Config.getInstance().getDebugAvgWindow());
+
         simulationEngine.start();
         initDeleteTimer();
     }
@@ -215,6 +229,16 @@ public class MainState implements State {
                 return;
             }
 
+            if (code == KeyCode.F3) {
+                debugOverlay = !debugOverlay;
+                simulationEngine.setTickProfiling(debugOverlay);
+                Config.getInstance().setDebugOverlay(debugOverlay);
+                Config.getInstance().save();
+                requestRender();
+                event.consume();
+                return;
+            }
+
             if (code == KeyCode.F && !event.isControlDown()) {
                 handleFAction();
                 fHandledOnPress = true;
@@ -222,7 +246,6 @@ public class MainState implements State {
                 return;
             }
 
-            // ===== R — удаление (сразу, независимо от фокуса) =====
             if (code == KeyCode.R && !event.isControlDown()) {
                 handleRAction();
                 event.consume();
@@ -252,10 +275,6 @@ public class MainState implements State {
     // UNDO / REDO helpers
     // ============================================================
 
-    /**
-     * Меняет одну клетку через undo-менеджер.
-     * Записывает точную пару (oldBlock/oldSignal -> newBlock/newSignal).
-     */
     private void changeCellWithUndo(int layer, int x, int y,
                                     String newBlock,
                                     String stepLabel) {
@@ -269,11 +288,9 @@ public class MainState implements State {
 
         if (oldBlock.equals(newBlock)) return;
 
-        // Меняем мир, затем пишем дельту (сигнал newSignal берём после setBlock)
         world.setBlock(layer, x, y, newBlock);
         boolean newSignal = world.getSignal(layer, x, y);
 
-        // Если блок не установился (например, невалидный тип) — setBlock оставит "0"
         String actualNew = world.getBlock(layer, x, y);
         if (actualNew == null) actualNew = "0";
 
@@ -290,7 +307,7 @@ public class MainState implements State {
         if (selecting || previewMode || panning) return;
 
         if (keyboardCursorActive) {
-            removeBlockAtCell(keyboardCursorX, keyboardCursorY);   // remove.wav
+            removeBlockAtCell(keyboardCursorX, keyboardCursorY);
             return;
         }
 
@@ -298,7 +315,7 @@ public class MainState implements State {
             deleteSelectionWithUndo();
             selection.clear();
             simulationEngine.markWorldChanged();
-            AudioManager.getInstance().playCopy();   // cut.wav
+            AudioManager.getInstance().playCopy();
             requestRender();
             System.out.println("Deleted selected area");
             return;
@@ -310,7 +327,6 @@ public class MainState implements State {
         removeBlockAtSceneCoords(lastSceneMouseX, lastSceneMouseY);
     }
 
-    /** Удаляет выделение одним undo-шагом. */
     private void deleteSelectionWithUndo() {
         int layer = world.getCurrentLayer();
         int minX = Math.min(selection.getStartX(), selection.getEndX());
@@ -335,7 +351,6 @@ public class MainState implements State {
         undoManager.commitStep();
     }
 
-    /** Вырезание выделения одним undo-шагом (с копированием в буфер). */
     private void cutSelectionWithUndo() {
         selection.copyToClipboard();
 
@@ -625,11 +640,6 @@ public class MainState implements State {
         }
     }
 
-    /**
-     * Удаление под координатами. Без анти-спама: если в клетке есть блок — удаляем.
-     * Так как после удаления клетка пустая, следующий тик ничего не сделает.
-     * Это даёт «мгновенное» удаление без задержек и без спама remove.wav.
-     */
     private void removeBlockAtSceneCoords(double sceneX, double sceneY) {
         if (isMouseOverPalette(sceneX, sceneY)) return;
 
@@ -657,6 +667,220 @@ public class MainState implements State {
                 System.out.println("Removed at (" + cellX + ", " + cellY + ")");
                 requestRender();
             }
+        }
+    }
+
+    private void rebuildDebugLines() {
+        int dirty   = simulationEngine.getDirtyCount();
+        int active  = simulationEngine.getActiveCellsCount();
+        int changes = simulationEngine.getPendingChangesCount();
+        int props   = simulationEngine.getLastPropagateCalls();
+
+        double lastNs = simulationEngine.getLastTickNs();
+        double rbNs   = simulationEngine.getRebuildNs();
+        double p1Ns   = simulationEngine.getPhase1Ns();
+        double p2Ns   = simulationEngine.getPhase2Ns();
+        double propNs = simulationEngine.getPropagateNs();
+
+        double avgTick = simulationEngine.getSnapAvgTickNs();
+        double minTick = simulationEngine.getSnapMinTickNs();
+        double maxTick = simulationEngine.getSnapMaxTickNs();
+
+        double avgRb   = simulationEngine.getSnapAvgRebuildNs();
+        double avgP1   = simulationEngine.getSnapAvgPhase1Ns();
+        double avgP2   = simulationEngine.getSnapAvgPhase2Ns();
+        double avgProp = simulationEngine.getSnapAvgPropagateNs();
+
+        int avgDirty   = simulationEngine.getSnapAvgDirty();
+        int avgActive  = simulationEngine.getSnapAvgActive();
+        int avgChanges = simulationEngine.getSnapAvgChanges();
+        int avgProps   = simulationEngine.getSnapAvgProps();
+        int maxCells   = simulationEngine.getSnapRebuildCellsMax();
+
+        int done  = simulationEngine.getSnapProgressDone();
+        int total = simulationEngine.getSnapProgressTotal();
+        int every = simulationEngine.getTickSampleEvery();
+
+        debugLines[0] = String.format(
+                "profiling: sample every %d ticks | avg window %d samples (%d/%d done)",
+                every, total, done, total);
+
+        debugLines[1] = String.format(
+                "dirty %6d   active %6d   changes %5d   props %5d   rebuild cells max %d",
+                avgDirty, avgActive, avgChanges, avgProps, maxCells);
+
+        debugLines[2] = String.format(
+                "tick %8.0f ns   min %8.0f ns   max %8.0f ns",
+                avgTick, minTick, maxTick);
+
+        debugLines[3] = String.format(
+                "rebuild %8.0f ns   phase1 %8.0f ns   phase2 %8.0f ns",
+                avgRb, avgP1, avgP2);
+
+        debugLines[4] = String.format(
+                "propagate %8.0f ns", avgProp);
+
+        int maxLen = 0;
+        for (String s : debugLines) {
+            if (s != null && s.length() > maxLen) maxLen = s.length();
+        }
+        debugBoxW = maxLen * 8.4 + 24;
+        debugBoxH = 5 * 18 + 10 + 6 + 26 + 8 + 6 * 16 + 12;
+    }
+
+    private void drawDebugOverlay(GraphicsContext gc) {
+        if (debugLines[0] == null) return;
+
+        ColorConfig colors = SpriteManager.getInstance().getColors();
+
+        Font font = Font.font("Monospaced", FontWeight.BOLD, 13);
+        gc.setFont(font);
+
+        double x0 = 12;
+        double y0 = 12;
+
+        gc.setFill(Color.web(colors.getBackground(), 0.92));
+        gc.fillRect(x0, y0, debugBoxW, debugBoxH);
+
+        gc.setStroke(Color.web(colors.getGrid(), 0.6));
+        gc.setLineWidth(1);
+        gc.strokeRect(x0 + 0.5, y0 + 0.5, debugBoxW - 1, debugBoxH - 1);
+
+        gc.setFill(Color.web(colors.getGrid()));
+        gc.setTextAlign(javafx.scene.text.TextAlignment.LEFT);
+        gc.setTextBaseline(javafx.geometry.VPos.TOP);
+
+        double ty = y0 + 10;
+        int textRows = 5; // Ровно 5 строк текста
+        for (int i = 0; i < textRows; i++) {
+            if (debugLines[i] != null) gc.fillText(debugLines[i], x0 + 12, ty);
+            ty += 18;
+        }
+
+        double diagX = x0 + 12;
+        double diagY = y0 + 10 + textRows * 18 + 6;
+        double diagW = debugBoxW - 24;
+        double diagH = 26;
+
+        drawPhaseDiagram(gc, colors, diagX, diagY, diagW, diagH);
+
+        gc.setTextBaseline(javafx.geometry.VPos.BASELINE);
+    }
+
+    private void drawPhaseDiagram(GraphicsContext gc, ColorConfig colors,
+                                  double x, double y, double w, double h) {
+        double avgTick = simulationEngine.getSnapAvgTickNs();
+        if (avgTick <= 0) return;
+
+        double rb   = simulationEngine.getSnapAvgRebuildNs();
+        double p1   = simulationEngine.getSnapAvgPhase1Ns();
+        double p2   = simulationEngine.getSnapAvgPhase2Ns();
+        double prop = simulationEngine.getSnapAvgPropagateNs();
+
+        double p2_prop = Math.min(prop, p2);
+        double p2_rest = Math.max(0, p2 - p2_prop);
+
+        double sumPhases = rb + p1 + p2;
+        double other = Math.max(0, avgTick - sumPhases);
+        double total = Math.max(1.0, sumPhases + other);
+
+        // Порядок: rebuild | phase1 (compute) | propagate | phase2-rest | other
+        double[] parts = { rb, p1, p2_prop, p2_rest, other };
+        String[] labels = { "rebuild", "phase1 (compute)", "propagate", "phase2-rest", "other/overhead" };
+
+        // Цвета
+        Color[] colorsArr = {
+                Color.web(colors.getArrow()),                                    // rebuild
+                Color.web(colors.getBridge()),                                   // phase1
+                Color.web(colors.getOr()),                                       // propagate
+                Color.web(colors.getAnd()),                                      // phase2-rest
+                Color.web(colors.getGrid()).interpolate(Color.web(colors.getBackground()), 0.5) // overhead
+        };
+
+        // Фон диаграммы
+        gc.setFill(Color.web(colors.getBackground(), 0.6));
+        gc.fillRect(x, y, w, h);
+
+        // 1. Рисуем сегменты с отступами по 2px
+        int visibleCount = 0;
+        for (double p : parts) {
+            if (p > 0) visibleCount++;
+        }
+
+        double totalGaps = Math.max(0, visibleCount - 1) * 2.0;
+        double availW = Math.max(0, w - totalGaps);
+
+        double px = x;
+        int drawn = 0;
+
+        for (int i = 0; i < parts.length; i++) {
+            double frac = parts[i] / total;
+            double segW = frac * availW;
+
+            if (segW <= 0) continue;
+            if (segW < 1.0) segW = 1.0;
+
+            gc.setFill(colorsArr[i]);
+            gc.fillRect(px, y, segW, h);
+
+            px += segW;
+
+            drawn++;
+            if (drawn < visibleCount) {
+                gc.setFill(Color.web(colors.getGrid()));
+                gc.fillRect(px, y, 2.0, h);
+                px += 2.0;
+            }
+        }
+
+        // Внешняя рамка
+        gc.setStroke(Color.web(colors.getGrid()));
+        gc.setLineWidth(1);
+        gc.strokeRect(x, y, w, h);
+
+        // 2. Подписи процентов внутри сегментов
+        gc.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
+        gc.setTextBaseline(javafx.geometry.VPos.CENTER);
+        gc.setFont(Font.font("Monospaced", FontWeight.BOLD, 11));
+
+        px = x;
+        drawn = 0;
+        for (int i = 0; i < parts.length; i++) {
+            double frac = parts[i] / total;
+            double segW = frac * availW;
+
+            if (segW <= 0) continue;
+            if (segW < 1.0) segW = 1.0;
+
+            if (segW >= 44) {
+                gc.setFill(Color.web(colors.getBackground()));
+                gc.fillText(String.format("%.0f%%", frac * 100.0), px + segW / 2, y + h / 2);
+            }
+
+            px += segW;
+            drawn++;
+            if (drawn < visibleCount) {
+                px += 2.0;
+            }
+        }
+
+        // 3. Легенда под диаграммой
+        gc.setTextAlign(javafx.scene.text.TextAlignment.LEFT);
+        gc.setTextBaseline(javafx.geometry.VPos.TOP);
+        gc.setFont(Font.font("Monospaced", FontWeight.BOLD, 11));
+
+        double lx = x;
+        double ly = y + h + 8;
+
+        for (int i = 0; i < parts.length; i++) {
+            double pct = (parts[i] / total) * 100.0;
+            gc.setFill(colorsArr[i]);
+            gc.fillRect(lx, ly + 2, 10, 10);
+
+            gc.setFill(Color.web(colors.getGrid()));
+            gc.fillText(String.format("%s: %.1f%%", labels[i], pct), lx + 16, ly);
+
+            ly += 16;
         }
     }
 
@@ -901,6 +1125,17 @@ public class MainState implements State {
         }
 
         palette.setActualTps(simulationEngine.getActualTps());
+
+        if (now - lastDebugUpdateNanos >= DEBUG_UPDATE_INTERVAL_NANOS) {
+            lastDebugUpdateNanos = now;
+            if (debugOverlay) {
+                rebuildDebugLines();
+            }
+        }
+
+        if (debugOverlay) {
+            drawDebugOverlay(gc);
+        }
     }
 
     @Override
@@ -908,7 +1143,6 @@ public class MainState implements State {
         if (event.isControlDown()) {
             KeyCode code = event.getCode();
 
-            // ===== UNDO / REDO =====
             if (code == KeyCode.Z) {
                 if (event.isShiftDown()) {
                     if (undoManager.redo()) {
@@ -978,7 +1212,6 @@ public class MainState implements State {
                     }
                     selection.startSelection(selectionStartX, selectionStartY, world.getCurrentLayer());
 
-                    // Сброс состояния selecting.wav — первое изменение размера сыграет сразу
                     lastSelectionSoundWidth = -1;
                     lastSelectionSoundHeight = -1;
                     lastSelectionSoundNanos = 0;
@@ -997,8 +1230,6 @@ public class MainState implements State {
                 requestRender();
                 break;
 
-            // R обрабатывается в installKeyboardFilter — здесь дублируем для случая,
-            // когда фильтр не стоит (на всякий случай)
             case R:
                 handleRAction();
                 break;
@@ -1011,12 +1242,12 @@ public class MainState implements State {
                     previewMode = false;
                     selection.clear();
                     Selection.resetClipboard();
-                    AudioManager.getInstance().playDeselect();   // deselect.wav
+                    AudioManager.getInstance().playDeselect();
                     requestRender();
                     System.out.println("Preview mode off, clipboard cleared");
                 } else if (selection.hasSelection()) {
                     selection.clear();
-                    AudioManager.getInstance().playDeselect();   // deselect.wav
+                    AudioManager.getInstance().playDeselect();
                     requestRender();
                 } else {
                     palette.setDirection(Direction.RIGHT);
@@ -1028,7 +1259,7 @@ public class MainState implements State {
                     cutSelectionWithUndo();
                     simulationEngine.markWorldChanged();
                     previewMode = true;
-                    AudioManager.getInstance().playCopy();   // cut.wav
+                    AudioManager.getInstance().playCopy();
                     requestRender();
                     System.out.println("Cut: selection removed, buffer filled, preview mode activated");
                 }
@@ -1038,7 +1269,7 @@ public class MainState implements State {
                 if (selection.hasSelection() && !previewMode && !selecting) {
                     selection.copyToClipboard();
                     previewMode = true;
-                    AudioManager.getInstance().playCopy();   // copy.wav
+                    AudioManager.getInstance().playCopy();
                     requestRender();
                     System.out.println("Copy: buffer filled, preview mode activated");
                 }
@@ -1058,7 +1289,7 @@ public class MainState implements State {
                     }
                     pasteWithUndo(px, py);
                     simulationEngine.markWorldChanged();
-                    AudioManager.getInstance().playInsert();   // insert.wav
+                    AudioManager.getInstance().playInsert();
                     requestRender();
                     System.out.println("Paste done at (" + px + ", " + py + ")");
                 }
@@ -1078,7 +1309,6 @@ public class MainState implements State {
         }
     }
 
-    /** Вставка из буфера одним undo-шагом. */
     private void pasteWithUndo(int px, int py) {
         List<List<String>> clip = Selection.getClipboardBlocks();
         if (clip.isEmpty()) return;
@@ -1129,9 +1359,7 @@ public class MainState implements State {
             selection.updateSelection(endX, endY);
             selection.finishSelection(world);
 
-            // === select.wav: завершение выделения ===
             AudioManager.getInstance().playSelect();
-            // === /select.wav ===
 
             requestRender();
             System.out.println("Selection finished: size "

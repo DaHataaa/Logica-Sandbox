@@ -70,12 +70,21 @@ public class Config {
     @SerializedName("ui_click_volume")
     private int uiClickVolume = 100;
 
-    // Редактирование мира: placement / remove / copy / insert / deselect / select / selecting
     @SerializedName("editor_volume")
     private int editorVolume = 100;
 
     @SerializedName("block_activation_volume")
     private int blockActivationVolume = 80;
+
+    // === DEBUG ===
+    @SerializedName("debug_overlay")
+    private boolean debugOverlay = false;
+
+    @SerializedName("debug_sample_every")
+    private int debugSampleEvery = 10;
+
+    @SerializedName("debug_avg_window")
+    private int debugAvgWindow = 100;
 
 
     private Config() {}
@@ -149,10 +158,13 @@ public class Config {
                     // AUDIO
                     this.masterVolume = loaded.masterVolume;
                     this.uiClickVolume = loaded.uiClickVolume;
-                    // Старый config.json мог не содержать editorVolume → 0.
-                    // 0 трактуем как "не задано" → 100.
                     this.editorVolume = (loaded.editorVolume <= 0) ? 100 : loaded.editorVolume;
                     this.blockActivationVolume = loaded.blockActivationVolume;
+
+                    // === DEBUG ===
+                    this.debugOverlay = loaded.debugOverlay;
+                    this.debugSampleEvery = (loaded.debugSampleEvery < 1) ? 10 : loaded.debugSampleEvery;
+                    this.debugAvgWindow   = (loaded.debugAvgWindow   < 1) ? 100 : loaded.debugAvgWindow;
                 }
             } catch (IOException e) {
                 System.err.println("Failed to load config, using defaults: " + e.getMessage());
@@ -194,6 +206,11 @@ public class Config {
     public int getEditorVolume() { return editorVolume; }
     public int getBlockActivationVolume() { return blockActivationVolume; }
 
+    // === DEBUG ===
+    public boolean isDebugOverlay() { return debugOverlay; }
+    public int getDebugSampleEvery() { return debugSampleEvery; }
+    public int getDebugAvgWindow() { return debugAvgWindow; }
+
     // Setters
     public void setCurrentTexturepack(String currentTexturepack) { this.currentTexturepack = currentTexturepack; }
     public void setSimulationSpeed(int simulationSpeed) { this.simulationSpeed = simulationSpeed; }
@@ -210,4 +227,9 @@ public class Config {
     public void setUiClickVolume(int uiClickVolume) { this.uiClickVolume = uiClickVolume; }
     public void setEditorVolume(int editorVolume) { this.editorVolume = editorVolume; }
     public void setBlockActivationVolume(int blockActivationVolume) { this.blockActivationVolume = blockActivationVolume; }
+
+    // === DEBUG ===
+    public void setDebugOverlay(boolean debugOverlay) { this.debugOverlay = debugOverlay; }
+    public void setDebugSampleEvery(int v) { if (v < 1) v = 1; this.debugSampleEvery = v; }
+    public void setDebugAvgWindow(int v)   { if (v < 1) v = 1; this.debugAvgWindow = v; }
 }

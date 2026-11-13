@@ -2,7 +2,6 @@ package com.app.audio;
 
 import com.app.Config;
 import com.app.core.BlockType;
-import com.app.core.World;
 import javafx.scene.Scene;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.input.MouseButton;
@@ -14,7 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class AudioManager {
     private static AudioManager instance;
@@ -27,26 +25,21 @@ public class AudioManager {
             "select", "selecting"
     };
 
-    // Питч на клетку диагонали для selecting.wav
     private static final double PITCH_PER_CELL = 0.01;
     private static final double MAX_RATE = 8.0;
     private static final double MIN_PITCH_RATE = 1.0;
 
-    // Квантование rate: 0.01 ≈ 0.17 полутона — на слух непрерывно.
     private static final double PITCH_QUANTUM = 0.01;
-    private static final int    PITCH_KEY_MIN = (int) Math.round(MIN_PITCH_RATE / PITCH_QUANTUM); // 100
-    private static final int    PITCH_KEY_MAX = (int) Math.round(MAX_RATE      / PITCH_QUANTUM); // 400
+    private static final int    PITCH_KEY_MIN = (int) Math.round(MIN_PITCH_RATE / PITCH_QUANTUM);
+    private static final int    PITCH_KEY_MAX = (int) Math.round(MAX_RATE      / PITCH_QUANTUM);
 
-    // Диапазон фонового прогрева файлов (чтобы первый драг не лагал)
     private static final double PREWARM_MAX_RATE = 2.8;
 
-    private final Map<String, AudioClip> clips = new HashMap<>();
+    private final Map<String, AudioClip> clips = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, Double> normalizationGains = new HashMap<>();
     private boolean loaded = false;
 
-    // ===== Питч-кэш selecting.wav =====
-    // Ключ — rate * 100 (т.е. rate, квантованный до 0.01)
-    private final Map<Integer, AudioClip> selectingPitchClips = new ConcurrentHashMap<>();
+    private final Map<Integer, AudioClip> selectingPitchClips = new java.util.concurrent.ConcurrentHashMap<>();
     private WavNormalizer.Pcm16Data selectingPcm;
     private long selectingSrcMod;
     private Path selectingCacheDir;
@@ -86,7 +79,6 @@ public class AudioManager {
             return;
         }
 
-        // ===== Проход 1: загрузка клипов + RMS/peak =====
         Map<String, Double> rmsMap  = new HashMap<>();
         Map<String, Double> peakMap = new HashMap<>();
 
@@ -107,7 +99,6 @@ public class AudioManager {
             }
         }
 
-        // ===== Проход 2: targetRms =====
         double targetRms = 0.0;
         String loudest = null;
         for (Map.Entry<String, Double> e : rmsMap.entrySet()) {
@@ -124,7 +115,6 @@ public class AudioManager {
                 targetRms, 20 * Math.log10(targetRms),
                 loudest != null ? loudest : "<fallback>");
 
-        // ===== Проход 3: gain'ы =====
         for (Map.Entry<String, Double> e : rmsMap.entrySet()) {
             String name = e.getKey();
             double rms  = e.getValue();
@@ -137,14 +127,12 @@ public class AudioManager {
             }
         }
 
-        // ===== Проход 4: источник для питч-кэша selecting =====
         initSelectingPitchSource(sfxDir);
 
         loaded = true;
         refreshVolumes();
         System.out.println("AudioManager loaded " + clips.size() + " sfx clips");
 
-        // ===== Фоновый прогрев WAV-файлов (не блокирует) =====
         prewarmPitchFilesAsync();
     }
 
@@ -175,11 +163,6 @@ public class AudioManager {
         this.selectingCacheDir = cacheDir;
     }
 
-    /**
-     * Возвращает AudioClip для заданного квантованного rate.
-     * Файл WAV генерируется на лету и кэшируется, если его ещё нет
-     * (или если исходный selecting.wav новее).
-     */
     private AudioClip getOrCreateSelectingClip(int quantKey) {
         AudioClip cached = selectingPitchClips.get(quantKey);
         if (cached != null) return cached;
@@ -203,7 +186,6 @@ public class AudioManager {
             AudioClip clip = new AudioClip(out.toUri().toString());
             clip.setVolume(selectingVolume);
 
-            // double-check: пока генерили, могли из другого потока положить
             AudioClip prev = selectingPitchClips.putIfAbsent(quantKey, clip);
             return prev != null ? prev : clip;
         } catch (Exception e) {
@@ -212,7 +194,6 @@ public class AudioManager {
         }
     }
 
-    /** Resampling исходных PCM-сэмплов с коэффициентом rate и запись в WAV. */
     private void writeResampled(Path out, double rate) throws IOException {
         WavNormalizer.Pcm16Data pcm = selectingPcm;
         if (pcm == null) return;
@@ -230,7 +211,6 @@ public class AudioManager {
         WavNormalizer.writePcm16Wav(out, dst, pcm.sampleRate, pcm.channels);
     }
 
-    /** Фоновая генерация WAV-файлов для типичного диапазона (1.00..2.80). */
     private void prewarmPitchFilesAsync() {
         if (selectingPcm == null || selectingCacheDir == null) return;
 
@@ -262,10 +242,6 @@ public class AudioManager {
         t.start();
     }
 
-    // ============================================================
-    // Громкость
-    // ============================================================
-
     public synchronized void refreshVolumes() {
         Config cfg = Config.getInstance();
         double master = clamp01(cfg.getMasterVolume() / 100.0);
@@ -285,7 +261,6 @@ public class AudioManager {
             e.getValue().setVolume(clamp01(master * category * gain));
         }
 
-        // Тот же гейн, что у базового selecting.wav
         double selGain = normalizationGains.getOrDefault("selecting", 1.0);
         this.selectingVolume = clamp01(master * editor * selGain);
         for (AudioClip c : selectingPitchClips.values()) {
@@ -319,10 +294,6 @@ public class AudioManager {
         return v;
     }
 
-    // ============================================================
-    // Воспроизведение
-    // ============================================================
-
     public void playButton()       { if (!uiClickMuted)         play("button"); }
     public void playPlacement()    { if (!editorMuted)          play("placement"); }
     public void playRemove()       { if (!editorMuted)          play("remove"); }
@@ -331,11 +302,6 @@ public class AudioManager {
     public void playDeselect()     { if (!editorMuted)          play("deselect"); }
     public void playSelect()       { if (!editorMuted)          play("select"); }
 
-    /**
-     * selecting.wav с непрерывным питчем от диагонали.
-     * rate = 1.0 + diagonal * 0.06, квантуется до 0.01 (≈0.17 полутона — неотличимо от непрерывного).
-     * На каждый новый rate генерируется WAV + AudioClip, дальше кэш.
-     */
     public void playSelectingTick(int width, int height) {
         if (editorMuted) return;
 
@@ -350,7 +316,6 @@ public class AudioManager {
 
         AudioClip clip = getOrCreateSelectingClip(quantKey);
         if (clip == null) {
-            // fallback: без питча, но хоть что-то
             play("selecting");
             return;
         }
@@ -363,29 +328,6 @@ public class AudioManager {
     public void playBlockSelected(BlockType type) {
         if (blockActivationMuted || type == null) return;
         play(type.getName());
-    }
-
-    public void playSignal(int worldTypeId) {
-        if (blockActivationMuted) return;
-        String name = fileNameForWorldType(worldTypeId);
-        if (name == null) return;
-        play(name);
-    }
-
-    private static String fileNameForWorldType(int type) {
-        switch (type) {
-            case World.TYPE_ARROW:  return "arrow";
-            case World.TYPE_GETTER: return "getter";
-            case World.TYPE_BRIDGE: return "bridge";
-            case World.TYPE_PEG:    return "peg";
-            case World.TYPE_POWER:  return "power";
-            case World.TYPE_NOT:    return "not";
-            case World.TYPE_OR:     return "or";
-            case World.TYPE_AND:    return "and";
-            case World.TYPE_XOR:    return "xor";
-            case World.TYPE_TEXT:   return "text";
-            default: return null;
-        }
     }
 
     private void play(String name) {

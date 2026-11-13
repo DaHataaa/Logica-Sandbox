@@ -108,6 +108,7 @@ public class SettingsState implements State {
         groupsContainer.getChildren().add(buildGameplayGroup());
         groupsContainer.getChildren().add(buildVideoGroup());
         groupsContainer.getChildren().add(buildAudioGroup());
+        groupsContainer.getChildren().add(buildMiscGroup());
     }
 
     private VBox buildGameplayGroup() {
@@ -209,6 +210,38 @@ public class SettingsState implements State {
         ));
 
         return group("🔊 AUDIO", rows);
+    }
+
+    private VBox buildMiscGroup() {
+        VBox rows = new VBox(0);
+        rows.setFillWidth(true);
+
+        rows.getChildren().add(intRow(
+                "Debug sample every (ticks)",
+                String.valueOf(config.getDebugSampleEvery()),
+                false, false,
+                v -> {
+                    if (v < 1) v = 1;
+                    if (v > 1000) v = 1000;
+                    config.setDebugSampleEvery(v);
+                },
+                String::valueOf
+        ));
+        rows.getChildren().add(separator());
+
+        rows.getChildren().add(intRow(
+                "Debug avg window (samples)",
+                String.valueOf(config.getDebugAvgWindow()),
+                false, false,
+                v -> {
+                    if (v < 1) v = 1;
+                    if (v > 10000) v = 10000;
+                    config.setDebugAvgWindow(v);
+                },
+                String::valueOf
+        ));
+
+        return group("🔧 MISC", rows);
     }
 
     private VBox group(String titleText, VBox rowsContainer) {

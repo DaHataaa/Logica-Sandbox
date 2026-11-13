@@ -19,5 +19,8 @@
   "master_volume": 100,
   "ui_click_volume": 100,
   "editor_volume": 100,
-  "block_activation_volume": 0
+  "block_activation_volume": 0,
+  "debug_overlay": true,
+  "debug_sample_every": 15,
+  "debug_avg_window": 5000
 }
