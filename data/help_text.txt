@@ -29,6 +29,7 @@ MAP SAVING
 
 OTHER
  F/LMC        - Edit Text block
+ F3           - Show/hide Debug window
 
 
 TIPS:
