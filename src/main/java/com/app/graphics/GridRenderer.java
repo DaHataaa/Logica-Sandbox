@@ -305,11 +305,19 @@ public class GridRenderer {
         int layerOffset = layer * world.sizeSq;
         boolean[] signals = world.getSignalsArray();
 
-        // ВАЖНО: Ограничиваем цикл видимой областью (startX/Y до endX/Y),
-        // а не всем миром, как было раньше! Это дает огромный прирост FPS при зуме.
+        // Максимальная длина текста (в клетках) среди всех текстовых блоков
+        // на этом слое. Нужна, чтобы захватить блоки, которые находятся левее
+        // startX, но чей текст «заезжает» в видимую область.
+        int maxTextCells = computeMaxTextCells(layer);
+
+        // Расширяем диапазон по X влево на maxTextCells, чтобы не пропустить
+        // блоки, текст которых продолжается в видимую область.
+        int scanStartX = Math.max(0, startX - maxTextCells);
+        int scanEndX   = Math.min(worldSizeCells, endX);
+
         for (int y = startY; y < endY; y++) {
             int rowStart = layerOffset + y * worldSizeCells;
-            for (int x = startX; x < endX; x++) {
+            for (int x = scanStartX; x < scanEndX; x++) {
                 int idx = rowStart + x;
 
                 if (world.blockTypes[idx] != World.TYPE_TEXT) continue;
@@ -325,11 +333,15 @@ public class GridRenderer {
                 double cellScreenY = camera.worldToScreenY(y * baseCellSize);
 
                 for (int c = 0; c < len; c++) {
+                    int cellX = x + c;
+
+                    // Рисуем только те символы, чья клетка попадает в видимую область
+                    // (плюс небольшая погрешность на границе).
+                    if (cellX < startX - 1 || cellX > endX + 1) continue;
+
                     char ch = text.charAt(c);
 
-                    // Точная screen-координата клетки (x + c)
-                    double cellScreenX = camera.worldToScreenX((x + c) * baseCellSize);
-
+                    double cellScreenX = camera.worldToScreenX(cellX * baseCellSize);
                     double centerX = cellScreenX + cellScreenSize * 0.5;
                     double centerY = cellScreenY + cellScreenSize * 0.52;
 
@@ -340,6 +352,33 @@ public class GridRenderer {
 
         gc.setTextAlign(TextAlignment.LEFT);
         gc.setTextBaseline(VPos.BASELINE);
+    }
+
+    /**
+     * Максимальная длина текста (в клетках) среди всех текстовых блоков
+     * на указанном слое. Используется, чтобы расширить зону сканирования
+     * и не пропустить блоки, чей текст «заезжает» в видимую область.
+     */
+    private int computeMaxTextCells(int layer) {
+        int layerOffset = layer * world.sizeSq;
+        int max = 0;
+        for (int i = 0; i < world.sizeSq; i++) {
+            int idx = layerOffset + i;
+            if (world.blockTypes[idx] != World.TYPE_TEXT) continue;
+            String raw = world.blockTexts[idx];
+            if (raw == null || raw.isEmpty()) continue;
+
+            int pipe = raw.indexOf('|');
+            if (pipe < 0) {
+                if (raw.length() > max) max = raw.length();
+            } else {
+                int trueLen  = pipe;
+                int falseLen = raw.length() - pipe - 1;
+                if (trueLen  > max) max = trueLen;
+                if (falseLen > max) max = falseLen;
+            }
+        }
+        return max;
     }
 
     private String extractText(String raw, boolean signalOn) {
