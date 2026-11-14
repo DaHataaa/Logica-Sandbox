@@ -159,7 +159,8 @@ public class Selection {
                 int x = mouseX + dx;
                 int y = mouseY + dy;
                 if (x >= 0 && x < world.getSize() && y >= 0 && y < world.getSize()) {
-                    boolean state = world.blockStates[targetLayer][y][x];
+                    int idx = world.getIdx(targetLayer, x, y);
+                    boolean state = world.blockStates[idx];
                     world.setSignal(targetLayer, x, y, state);
                 }
             }
