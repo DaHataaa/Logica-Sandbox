@@ -76,7 +76,6 @@ public class BlockPalette extends VBox {
         setPrefWidth(paletteWidth);
         setMinWidth(paletteWidth);
         setMaxWidth(paletteWidth);
-
         setAlignment(Pos.TOP_CENTER);
 
         createItems();

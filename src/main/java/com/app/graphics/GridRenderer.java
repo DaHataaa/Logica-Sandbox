@@ -190,6 +190,10 @@ public class GridRenderer {
         int cellScreenSize = camera.getCellScreenSize();
         int currentLayer = world.getCurrentLayer();
 
+        // Оптимизация: смещение для плоских массивов
+        int layerOffset = currentLayer * world.sizeSq;
+        boolean[] signals = world.getSignalsArray();
+
         int startX = Math.max(0, camera.getVisibleStartX(worldSizeCells));
         int startY = Math.max(0, camera.getVisibleStartY(worldSizeCells));
         int endX = Math.min(worldSizeCells, camera.getVisibleEndX(worldSizeCells));
@@ -203,10 +207,13 @@ public class GridRenderer {
 
         // ===== ПРОХОД 1: фоны + спрайты / точки =====
         for (int y = startY; y < endY; y++) {
+            int rowStart = layerOffset + y * worldSizeCells;
             for (int x = startX; x < endX; x++) {
-                int typeId = world.blockTypes[currentLayer][y][x];
-                int dirIdx = world.blockDirs[currentLayer][y][x];
-                boolean hasSignal = world.getSignal(currentLayer, x, y);
+                int idx = rowStart + x;
+
+                int typeId = world.blockTypes[idx];
+                int dirIdx = world.blockDirs[idx];
+                boolean hasSignal = signals[idx];
 
                 // Каждая клетка — от своей world-координаты через worldToScreenX
                 double screenX = camera.worldToScreenX(x * baseCellSize);
@@ -226,9 +233,6 @@ public class GridRenderer {
                     // <<< TINY: крошечные клетки — квадрат по центру, сторона = половина клетки
                     if (cellScreenSize <= TINY_CELL_THRESHOLD) {
                         gc.setFill(getBlockColor(blockName));
-                        // Сторона = половина клетки. Позиция — по центру клетки.
-                        // Для клеток 1..5 px сторона округляется: 1px→1, 2px→1, 3px→2,
-                        // 4px→2, 5px→3 (целочисленное деление, минимум 1px).
                         int dotSize = Math.max(1, cellScreenSize / 2);
                         int offset = (cellScreenSize - dotSize) / 2;
                         gc.fillRect(ix + offset, iy + offset, dotSize, dotSize);
@@ -291,11 +295,6 @@ public class GridRenderer {
     private void renderTextBlocks(int layer, int startX, int startY, int endX, int endY, int cellScreenSize) {
         if (cellScreenSize <= TINY_CELL_THRESHOLD) return;
 
-        int textStartX = 0;
-        int textStartY = 0;
-        int textEndX = worldSizeCells;
-        int textEndY = worldSizeCells;
-
         double fontSize = Math.max(6.0, cellScreenSize / 1);
         gc.setFont(getTextFont(fontSize));
         gc.setFill(textColor);
@@ -303,19 +302,26 @@ public class GridRenderer {
         gc.setTextAlign(TextAlignment.CENTER);
         gc.setTextBaseline(VPos.CENTER);
 
-        for (int y = textStartY; y < textEndY; y++) {
-            for (int x = textStartX; x < textEndX; x++) {
-                if (world.blockTypes[layer][y][x] != World.TYPE_TEXT) continue;
+        int layerOffset = layer * world.sizeSq;
+        boolean[] signals = world.getSignalsArray();
 
-                String raw = world.blockTexts[layer][y][x];
+        // ВАЖНО: Ограничиваем цикл видимой областью (startX/Y до endX/Y),
+        // а не всем миром, как было раньше! Это дает огромный прирост FPS при зуме.
+        for (int y = startY; y < endY; y++) {
+            int rowStart = layerOffset + y * worldSizeCells;
+            for (int x = startX; x < endX; x++) {
+                int idx = rowStart + x;
+
+                if (world.blockTypes[idx] != World.TYPE_TEXT) continue;
+
+                String raw = world.blockTexts[idx];
                 if (raw == null || raw.isEmpty()) continue;
 
-                boolean signalOn = world.getSignal(layer, x, y);
+                boolean signalOn = signals[idx];
                 String text = extractText(raw, signalOn);
                 if (text == null || text.isEmpty()) continue;
 
                 int len = text.length();
-
                 double cellScreenY = camera.worldToScreenY(y * baseCellSize);
 
                 for (int c = 0; c < len; c++) {

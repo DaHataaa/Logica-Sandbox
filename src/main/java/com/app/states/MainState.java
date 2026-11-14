@@ -435,11 +435,12 @@ public class MainState implements State {
         int[] cell = getActiveCursorCell();
         int cx = cell[0];
         int cy = cell[1];
-
         if (!isValidCell(cx, cy)) return;
 
         int layer = world.getCurrentLayer();
-        if (world.blockTypes[layer][cy][cx] == World.TYPE_TEXT) {
+        int idx = world.getIdx(layer, cx, cy);
+
+        if (world.blockTypes[idx] == World.TYPE_TEXT) {
             openTextEditor(cx, cy);
         } else {
             placeBlockAtCell(cx, cy);
@@ -592,15 +593,13 @@ public class MainState implements State {
 
     private void placeBlock(double sceneX, double sceneY) {
         if (isMouseOverPalette(sceneX, sceneY)) return;
-
         Point2D canvasCoords = getCanvasCoordinates(sceneX, sceneY);
         double canvasX = canvasCoords.getX();
         double canvasY = canvasCoords.getY();
 
         if (canvasX < 0 || canvasX > renderer.getCanvas().getWidth() ||
                 canvasY < 0 || canvasY > renderer.getCanvas().getHeight()) {
-            lastPlacedCellX = -1;
-            lastPlacedCellY = -1;
+            lastPlacedCellX = -1; lastPlacedCellY = -1;
             return;
         }
 
@@ -612,31 +611,25 @@ public class MainState implements State {
         int cellY = (int) Math.floor(worldY / baseCellSize);
 
         if (cellX >= 0 && cellX < world.getSize() && cellY >= 0 && cellY < world.getSize()) {
-            if (cellX == lastPlacedCellX && cellY == lastPlacedCellY) {
-                return;
-            }
+            if (cellX == lastPlacedCellX && cellY == lastPlacedCellY) return;
             lastPlacedCellX = cellX;
             lastPlacedCellY = cellY;
 
             int layer = world.getCurrentLayer();
-            if (world.blockTypes[layer][cellY][cellX] == World.TYPE_TEXT) return;
+            int idx = world.getIdx(layer, cellX, cellY);
+            if (world.blockTypes[idx] == World.TYPE_TEXT) return;
 
             BlockType type = palette.getSelectedBlock();
             Direction dir = palette.getCurrentDirection();
-
             String blockStr = type.getName();
-            if (type.hasDirection()) {
-                blockStr += "_f" + dir.getCode();
-            }
+            if (type.hasDirection()) blockStr += "_f" + dir.getCode();
 
             changeCellWithUndo(layer, cellX, cellY, blockStr, "place");
             simulationEngine.markWorldChanged();
             AudioManager.getInstance().playPlacement();
-            System.out.println("Placed: " + blockStr + " at (" + cellX + ", " + cellY + ") on layer " + layer);
             requestRender();
         } else {
-            lastPlacedCellX = -1;
-            lastPlacedCellY = -1;
+            lastPlacedCellX = -1; lastPlacedCellY = -1;
         }
     }
 
@@ -751,7 +744,7 @@ public class MainState implements State {
         gc.setTextBaseline(javafx.geometry.VPos.TOP);
 
         double ty = y0 + 10;
-        int textRows = 5; // Ровно 5 строк текста
+        int textRows = 5;
         for (int i = 0; i < textRows; i++) {
             if (debugLines[i] != null) gc.fillText(debugLines[i], x0 + 12, ty);
             ty += 18;
@@ -784,24 +777,20 @@ public class MainState implements State {
         double other = Math.max(0, avgTick - sumPhases);
         double total = Math.max(1.0, sumPhases + other);
 
-        // Порядок: rebuild | phase1 (compute) | propagate | phase2-rest | other
         double[] parts = { rb, p1, p2_prop, p2_rest, other };
         String[] labels = { "rebuild", "phase1 (compute)", "propagate", "phase2-rest", "other/overhead" };
 
-        // Цвета
         Color[] colorsArr = {
-                Color.web(colors.getArrow()),                                    // rebuild
-                Color.web(colors.getBridge()),                                   // phase1
-                Color.web(colors.getOr()),                                       // propagate
-                Color.web(colors.getAnd()),                                      // phase2-rest
-                Color.web(colors.getGrid()).interpolate(Color.web(colors.getBackground()), 0.5) // overhead
+                Color.web(colors.getArrow()),
+                Color.web(colors.getBridge()),
+                Color.web(colors.getOr()),
+                Color.web(colors.getAnd()),
+                Color.web(colors.getGrid()).interpolate(Color.web(colors.getBackground()), 0.5)
         };
 
-        // Фон диаграммы
         gc.setFill(Color.web(colors.getBackground(), 0.6));
         gc.fillRect(x, y, w, h);
 
-        // 1. Рисуем сегменты с отступами по 2px
         int visibleCount = 0;
         for (double p : parts) {
             if (p > 0) visibleCount++;
@@ -833,12 +822,10 @@ public class MainState implements State {
             }
         }
 
-        // Внешняя рамка
         gc.setStroke(Color.web(colors.getGrid()));
         gc.setLineWidth(1);
         gc.strokeRect(x, y, w, h);
 
-        // 2. Подписи процентов внутри сегментов
         gc.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
         gc.setTextBaseline(javafx.geometry.VPos.CENTER);
         gc.setFont(Font.font("Monospaced", FontWeight.BOLD, 11));
@@ -864,7 +851,6 @@ public class MainState implements State {
             }
         }
 
-        // 3. Легенда под диаграммой
         gc.setTextAlign(javafx.scene.text.TextAlignment.LEFT);
         gc.setTextBaseline(javafx.geometry.VPos.TOP);
         gc.setFont(Font.font("Monospaced", FontWeight.BOLD, 11));
@@ -1400,8 +1386,9 @@ public class MainState implements State {
         } else if (event.getButton() == MouseButton.PRIMARY) {
             if (!overPalette && !selecting && !deleteMode) {
                 int[] cell = getCellUnderSceneCoords(event.getSceneX(), event.getSceneY());
-                if (isValidCell(cell[0], cell[1])
-                        && world.blockTypes[world.getCurrentLayer()][cell[1]][cell[0]] == World.TYPE_TEXT) {
+                int layer = world.getCurrentLayer();
+                if (isValidCell(cell[0], cell[1]) &&
+                        world.blockTypes[world.getIdx(layer, cell[0], cell[1])] == World.TYPE_TEXT) {
                     openTextEditor(cell[0], cell[1]);
                 } else {
                     placeBlock(event.getSceneX(), event.getSceneY());

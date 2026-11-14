@@ -5,18 +5,19 @@ import com.app.Config;
 public class World {
     private final int size;
     private final int layers;
-    private final String[][][] blocks;
-    private final boolean[][][] signals;
+    public final int sizeSq;
 
-    // КЭШ ТЕКСТОВ (только для TYPE_TEXT): "TRUE|FALS" или null
-    public final String[][][] blockTexts;
+    // Плоские массивы (1D)
+    private final String[] blocks;
+    private final boolean[] signals;
+    public final String[] blockTexts;
+
+    // КЭШ БЛОКОВ (1D)
+    public final int[] blockTypes;
+    public final int[] blockDirs;
+    public final boolean[] blockStates;
 
     private int currentLayer;
-
-    // КЭШ БЛОКОВ
-    public final int[][][] blockTypes;
-    public final int[][][] blockDirs;
-    public final boolean[][][] blockStates;
 
     // Константы типов блоков
     public static final int TYPE_EMPTY = 0;
@@ -31,7 +32,6 @@ public class World {
     public static final int TYPE_PEG = 9;
     public static final int TYPE_TEXT = 10;
 
-    // Для сборки строки при saveMap
     public static final String[] TYPE_NAMES = {
             "0", "arrow", "and", "or", "xor", "not", "bridge", "power", "getter", "peg", "text"
     };
@@ -43,46 +43,50 @@ public class World {
         Config config = Config.getInstance();
         this.size = config.getWorldSize();
         this.layers = config.getLayers();
-        this.blocks = new String[layers][size][size];
-        this.signals = new boolean[layers][size][size];
-        this.blockTypes = new int[layers][size][size];
-        this.blockDirs = new int[layers][size][size];
-        this.blockStates = new boolean[layers][size][size];
-        this.blockTexts = new String[layers][size][size];
+        this.sizeSq = size * size;
+
+        int capacity = layers * sizeSq;
+
+        this.blocks = new String[capacity];
+        this.signals = new boolean[capacity];
+        this.blockTypes = new int[capacity];
+        this.blockDirs = new int[capacity];
+        this.blockStates = new boolean[capacity];
+        this.blockTexts = new String[capacity];
         this.currentLayer = 0;
         clear();
     }
 
+    public int getIdx(int layer, int x, int y) {
+        return (layer * sizeSq) + (y * size) + x;
+    }
+
     public void clear() {
-        for (int l = 0; l < layers; l++) {
-            for (int y = 0; y < size; y++) {
-                for (int x = 0; x < size; x++) {
-                    blocks[l][y][x] = "0";
-                    signals[l][y][x] = false;
-                    blockTypes[l][y][x] = TYPE_EMPTY;
-                    blockDirs[l][y][x] = 0;
-                    blockStates[l][y][x] = false;
-                    blockTexts[l][y][x] = null;
-                }
-            }
+        for (int i = 0; i < blocks.length; i++) {
+            blocks[i] = "0";
+            signals[i] = false;
+            blockTypes[i] = TYPE_EMPTY;
+            blockDirs[i] = 0;
+            blockStates[i] = false;
+            blockTexts[i] = null;
         }
     }
 
     public void setBlock(int layer, int x, int y, String blockType) {
         if (!isValid(layer, x, y)) return;
+        int idx = getIdx(layer, x, y);
 
-        blocks[layer][y][x] = blockType;
-        blockTexts[layer][y][x] = null;
+        blocks[idx] = blockType;
+        blockTexts[idx] = null;
 
         if (blockType == null || blockType.equals("0")) {
-            blockTypes[layer][y][x] = TYPE_EMPTY;
-            blockDirs[layer][y][x] = 0;
-            blockStates[layer][y][x] = false;
-            signals[layer][y][x] = false;
+            blockTypes[idx] = TYPE_EMPTY;
+            blockDirs[idx] = 0;
+            blockStates[idx] = false;
+            signals[idx] = false;
             return;
         }
 
-        // ===== Отрезаем текстовую часть (суффикс после '|') =====
         String textsPart = null;
         int pipeIdx = blockType.indexOf('|');
         if (pipeIdx >= 0) {
@@ -92,47 +96,44 @@ public class World {
 
         int underscoreIndex = blockType.indexOf('_');
 
-        // ===== Блоки без суффиксов: power, peg, text =====
         if (underscoreIndex == -1) {
             if (blockType.equals("power")) {
-                blockTypes[layer][y][x] = TYPE_POWER;
-                blockDirs[layer][y][x] = 0;
-                blockStates[layer][y][x] = true;
-                signals[layer][y][x] = true;
+                blockTypes[idx] = TYPE_POWER;
+                blockDirs[idx] = 0;
+                blockStates[idx] = true;
+                signals[idx] = true;
                 return;
             }
             if (blockType.equals("peg")) {
-                blockTypes[layer][y][x] = TYPE_PEG;
-                blockDirs[layer][y][x] = 0;
-                blockStates[layer][y][x] = false;
-                signals[layer][y][x] = false;
+                blockTypes[idx] = TYPE_PEG;
+                blockDirs[idx] = 0;
+                blockStates[idx] = false;
+                signals[idx] = false;
                 return;
             }
             if (blockType.equals("text")) {
-                blockTypes[layer][y][x] = TYPE_TEXT;
-                blockDirs[layer][y][x] = 0;
-                blockStates[layer][y][x] = false;
-                signals[layer][y][x] = false;
+                blockTypes[idx] = TYPE_TEXT;
+                blockDirs[idx] = 0;
+                blockStates[idx] = false;
+                signals[idx] = false;
                 String raw = (textsPart != null) ? textsPart
                         : (DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE);
-                // _ → пробел (обратное экранирование)
                 raw = raw.replace('_', ' ');
-                blockTexts[layer][y][x] = raw;
+                blockTexts[idx] = raw;
                 return;
             }
-            // Неизвестный блок без суффикса — пусто
-            blockTypes[layer][y][x] = TYPE_EMPTY;
-            blockDirs[layer][y][x] = 0;
-            blockStates[layer][y][x] = false;
-            signals[layer][y][x] = false;
+            blockTypes[idx] = TYPE_EMPTY;
+            blockDirs[idx] = 0;
+            blockStates[idx] = false;
+            signals[idx] = false;
             return;
         }
 
         if (underscoreIndex + 2 >= blockType.length()) {
-            blockTypes[layer][y][x] = TYPE_EMPTY;
-            blockDirs[layer][y][x] = 0;
-            blockStates[layer][y][x] = false;
-            signals[layer][y][x] = false;
+            blockTypes[idx] = TYPE_EMPTY;
+            blockDirs[idx] = 0;
+            blockStates[idx] = false;
+            signals[idx] = false;
             return;
         }
 
@@ -164,69 +165,68 @@ public class World {
 
         boolean blockState = (type == TYPE_POWER) || (state == 't');
 
-        blockTypes[layer][y][x] = type;
-        blockDirs[layer][y][x] = dirIndex;
-        blockStates[layer][y][x] = blockState;
-        signals[layer][y][x] = blockState;
+        blockTypes[idx] = type;
+        blockDirs[idx] = dirIndex;
+        blockStates[idx] = blockState;
+        signals[idx] = blockState;
 
         if (type == TYPE_TEXT) {
             String raw = (textsPart != null) ? textsPart
                     : (DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE);
-            // _ → пробел (обратное экранирование)
             raw = raw.replace('_', ' ');
-            blockTexts[layer][y][x] = raw;
+            blockTexts[idx] = raw;
         }
     }
 
     public void updateBlockState(int layer, int x, int y, boolean state, int dirIndex) {
         if (!isValid(layer, x, y)) return;
-
-        int type = blockTypes[layer][y][x];
+        int idx = getIdx(layer, x, y);
+        int type = blockTypes[idx];
         if (type == TYPE_EMPTY) return;
 
-        blockStates[layer][y][x] = state;
-        blockDirs[layer][y][x] = dirIndex;
-        signals[layer][y][x] = state;
+        blockStates[idx] = state;
+        blockDirs[idx] = dirIndex;
+        signals[idx] = state;
     }
 
     public void removeBlock(int layer, int x, int y) {
-        if (isValid(layer, x, y)) {
-            blocks[layer][y][x] = "0";
-            signals[layer][y][x] = false;
-            blockTypes[layer][y][x] = TYPE_EMPTY;
-            blockDirs[layer][y][x] = 0;
-            blockStates[layer][y][x] = false;
-            blockTexts[layer][y][x] = null;
-        }
+        if (!isValid(layer, x, y)) return;
+        int idx = getIdx(layer, x, y);
+        blocks[idx] = "0";
+        signals[idx] = false;
+        blockTypes[idx] = TYPE_EMPTY;
+        blockDirs[idx] = 0;
+        blockStates[idx] = false;
+        blockTexts[idx] = null;
     }
 
-    public boolean[][][] getSignalsArray() {
+    public boolean[] getSignalsArray() {
         return signals;
     }
 
     public String getBlock(int layer, int x, int y) {
         if (!isValid(layer, x, y)) return null;
+        int idx = getIdx(layer, x, y);
 
-        int type = blockTypes[layer][y][x];
+        int type = blockTypes[idx];
         if (type == TYPE_TEXT) {
-            String texts = blockTexts[layer][y][x];
+            String texts = blockTexts[idx];
             if (texts == null) texts = DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE;
-            char s = blockStates[layer][y][x] ? 't' : 'f';
-            // Возвращаем с пробелами — это внутренний формат (буфер обмена, saveMap)
+            char s = blockStates[idx] ? 't' : 'f';
             return "text_" + s + "f|" + texts;
         }
-        return blocks[layer][y][x];
+        return blocks[idx];
     }
 
     public void setSignal(int layer, int x, int y, boolean value) {
         if (isValid(layer, x, y)) {
-            signals[layer][y][x] = value;
+            signals[getIdx(layer, x, y)] = value;
         }
     }
 
     public boolean getSignal(int layer, int x, int y) {
         if (!isValid(layer, x, y)) return false;
-        return signals[layer][y][x];
+        return signals[getIdx(layer, x, y)];
     }
 
     public void setCurrentLayer(int layer) {
@@ -238,15 +238,11 @@ public class World {
     public int getCurrentLayer() { return currentLayer; }
 
     public void nextLayer() {
-        if (currentLayer < layers - 1) {
-            currentLayer++;
-        }
+        if (currentLayer < layers - 1) currentLayer++;
     }
 
     public void previousLayer() {
-        if (currentLayer > 0) {
-            currentLayer--;
-        }
+        if (currentLayer > 0) currentLayer--;
     }
 
     private boolean isValid(int layer, int x, int y) {
@@ -261,58 +257,47 @@ public class World {
 
     public boolean isPegConnected(int layer, int x, int y) {
         if (!isValid(layer, x, y)) return false;
-        int type = blockTypes[layer][y][x];
-        if (type != TYPE_PEG) return false;
+        int idx = getIdx(layer, x, y);
+        if (blockTypes[idx] != TYPE_PEG) return false;
 
-        if (layer + 1 < layers) {
-            if (blockTypes[layer + 1][y][x] == TYPE_PEG) return true;
-        }
-
-        if (layer - 1 >= 0) {
-            if (blockTypes[layer - 1][y][x] == TYPE_PEG) return true;
-        }
+        if (layer + 1 < layers && blockTypes[getIdx(layer + 1, x, y)] == TYPE_PEG) return true;
+        if (layer - 1 >= 0 && blockTypes[getIdx(layer - 1, x, y)] == TYPE_PEG) return true;
 
         return false;
     }
 
-    // ===== Методы для текстовых блоков =====
-
-    /** Возвращает "TRUE|FALS" или null. */
     public String getBlockTexts(int layer, int x, int y) {
         if (!isValid(layer, x, y)) return null;
-        return blockTexts[layer][y][x];
+        return blockTexts[getIdx(layer, x, y)];
     }
 
-    /** Устанавливает два текста (вызывается из диалога). */
     public void setBlockTexts(int layer, int x, int y, String trueText, String falseText) {
         if (!isValid(layer, x, y)) return;
-        if (blockTypes[layer][y][x] != TYPE_TEXT) return;
+        int idx = getIdx(layer, x, y);
+        if (blockTypes[idx] != TYPE_TEXT) return;
 
         if (trueText == null) trueText = "";
         if (falseText == null) falseText = "";
 
-        blockTexts[layer][y][x] = trueText + "|" + falseText;
-        rebuildBlockString(layer, x, y);
+        blockTexts[idx] = trueText + "|" + falseText;
+        rebuildBlockString(idx);
     }
 
-    /** Устанавливает raw-строку "TRUE|FALS" (для загрузки/вставки). */
     public void setBlockTextsRaw(int layer, int x, int y, String raw) {
         if (!isValid(layer, x, y)) return;
-        if (blockTypes[layer][y][x] != TYPE_TEXT) return;
-        if (raw != null) {
-            raw = raw.replace('_', ' ');
-        }
-        blockTexts[layer][y][x] = raw;
-        rebuildBlockString(layer, x, y);
+        int idx = getIdx(layer, x, y);
+        if (blockTypes[idx] != TYPE_TEXT) return;
+        if (raw != null) raw = raw.replace('_', ' ');
+        blockTexts[idx] = raw;
+        rebuildBlockString(idx);
     }
 
-    /** Пересобирает строку блока для text-блока. */
-    private void rebuildBlockString(int layer, int x, int y) {
-        if (blockTypes[layer][y][x] != TYPE_TEXT) return;
-        String texts = blockTexts[layer][y][x];
+    private void rebuildBlockString(int idx) {
+        if (blockTypes[idx] != TYPE_TEXT) return;
+        String texts = blockTexts[idx];
         if (texts == null) texts = DEFAULT_TEXT_TRUE + "|" + DEFAULT_TEXT_FALSE;
-        char s = blockStates[layer][y][x] ? 't' : 'f';
-        blocks[layer][y][x] = "text_" + s + "f|" + texts;
+        char s = blockStates[idx] ? 't' : 'f';
+        blocks[idx] = "text_" + s + "f|" + texts;
     }
 
     public int getSize() { return size; }

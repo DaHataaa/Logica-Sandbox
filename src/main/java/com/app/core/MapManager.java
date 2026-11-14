@@ -23,14 +23,6 @@ public class MapManager {
         }
     }
 
-    // ============================================================
-    // СТАТИСТИКА КАРТЫ (для карточек в меню)
-    // ============================================================
-
-    // ============================================================
-// СТАТИСТИКА КАРТЫ (для карточек в меню)
-// ============================================================
-
     public static class MapStats {
         public final String name;
         public final long lastModifiedMillis;
@@ -67,11 +59,6 @@ public class MapManager {
         }
     }
 
-    // Точные коэффициенты транзисторов на один вентиль (static CMOS, NAND-эквивалент):
-//   NOT  = инвертор            = 1 pMOS + 1 nMOS                  = 2
-//   AND  = NAND2 + NOT         = (2 pMOS + 2 nMOS) + 2            = 6
-//   OR   = NOR2 + NOT          = (2 pMOS + 2 nMOS) + 2            = 6
-//   XOR  = оптимизированный    = 12 (static CMOS XOR2)
     public static final int TR_NOT = 2;
     public static final int TR_AND = 6;
     public static final int TR_OR  = 6;
@@ -186,13 +173,13 @@ public class MapManager {
         );
     }
 
+    // В MapManager.java замените методы saveMap и loadMap:
+
     public static boolean saveMap(String name, World world) {
         Path file = MAPS_DIR.resolve(sanitizeFilename(name) + ".logicmap");
-
         try (PrintWriter writer = new PrintWriter(new FileWriter(file.toFile()))) {
             int size = world.getSize();
             int layers = world.getLayers();
-
             writer.println("#LOGICMAP v1.0");
             writer.println("size=" + size);
             writer.println("layers=" + layers);
@@ -203,22 +190,23 @@ public class MapManager {
                 for (int y = 0; y < size; y++) {
                     StringBuilder line = new StringBuilder();
                     for (int x = 0; x < size; x++) {
-                        int t = world.blockTypes[layer][y][x];
+                        int idx = world.getIdx(layer, x, y);
+                        int t = world.blockTypes[idx];
                         if (t == World.TYPE_EMPTY) {
                             line.append("0");
                         } else if (t == World.TYPE_POWER) {
                             line.append("power");
                         } else if (t == World.TYPE_TEXT) {
-                            char s = world.blockStates[layer][y][x] ? 't' : 'f';
-                            String texts = world.blockTexts[layer][y][x];
+                            char s = world.blockStates[idx] ? 't' : 'f';
+                            String texts = world.blockTexts[idx];
                             if (texts == null || texts.isEmpty()) {
                                 texts = World.DEFAULT_TEXT_TRUE + "|" + World.DEFAULT_TEXT_FALSE;
                             }
                             texts = texts.replace(' ', '_');
                             line.append("text_").append(s).append("f|").append(texts);
                         } else {
-                            char s = world.blockStates[layer][y][x] ? 't' : 'f';
-                            char d = "urdl".charAt(world.blockDirs[layer][y][x] & 3);
+                            char s = world.blockStates[idx] ? 't' : 'f';
+                            char d = "urdl".charAt(world.blockDirs[idx] & 3);
                             line.append(World.TYPE_NAMES[t]).append('_').append(s).append(d);
                         }
                         if (x < size - 1) line.append(" ");
@@ -227,10 +215,8 @@ public class MapManager {
                 }
                 writer.println("---");
             }
-
-            System.out.println("Map saved: " + file + " (" + (size * size * layers) + " cells)");
+            System.out.println("Map saved: " + file);
             return true;
-
         } catch (IOException e) {
             System.err.println("Failed to save map: " + e.getMessage());
             return false;
@@ -239,13 +225,7 @@ public class MapManager {
 
     public static boolean loadMap(String name, World world) {
         Path file = MAPS_DIR.resolve(sanitizeFilename(name) + ".logicmap");
-
-        if (!Files.exists(file)) {
-            System.err.println("Map not found: " + file);
-            return false;
-        }
-
-        System.out.println("Loading map from: " + file);
+        if (!Files.exists(file)) return false;
 
         try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
             String line;
@@ -260,39 +240,19 @@ public class MapManager {
 
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
-
                 if (line.startsWith("#LOGICMAP")) continue;
-                if (line.startsWith("size=")) {
-                    size = Integer.parseInt(line.substring(5));
-                    System.out.println("Map size: " + size);
-                    continue;
-                }
-                if (line.startsWith("layers=")) {
-                    layers = Integer.parseInt(line.substring(7));
-                    System.out.println("Map layers: " + layers);
-                    continue;
-                }
+                if (line.startsWith("size=")) { size = Integer.parseInt(line.substring(5)); continue; }
+                if (line.startsWith("layers=")) { layers = Integer.parseInt(line.substring(7)); continue; }
                 if (line.equals("---")) {
-                    if (readingData) {
-                        readingData = false;
-                        currentLayer++;
-                        currentY = 0;
-                        System.out.println("Finished loading layer " + currentLayer);
-                    } else {
-                        readingData = true;
-                        currentLayer = 0;
-                        currentY = 0;
-                    }
+                    if (readingData) { readingData = false; currentLayer++; currentY = 0; }
+                    else { readingData = true; currentLayer = 0; currentY = 0; }
                     continue;
                 }
                 if (line.startsWith("#layer")) {
                     readingData = true;
                     String[] parts = line.split(" ");
-                    if (parts.length > 1) {
-                        currentLayer = Integer.parseInt(parts[1]);
-                    }
+                    if (parts.length > 1) currentLayer = Integer.parseInt(parts[1]);
                     currentY = 0;
-                    System.out.println("Loading layer " + currentLayer);
                     continue;
                 }
 
@@ -303,33 +263,25 @@ public class MapManager {
                         if (!block.equals("0")) {
                             world.setBlock(currentLayer, x, currentY, block);
                             blocksLoaded++;
-                            if (blocksLoaded < 20) {
-                                System.out.println("Loaded: layer " + currentLayer + " (" + x + "," + currentY + ") = " + block);
-                            }
                         }
                     }
                     currentY++;
                 }
             }
 
+            // Синхронизация сигналов
             for (int l = 0; l < layers; l++) {
                 for (int y = 0; y < size; y++) {
                     for (int x = 0; x < size; x++) {
-                        int t = world.blockTypes[l][y][x];
-                        if (t == World.TYPE_EMPTY) continue;
-                        boolean state = world.blockStates[l][y][x];
+                        int idx = world.getIdx(l, x, y);
+                        if (world.blockTypes[idx] == World.TYPE_EMPTY) continue;
+                        boolean state = world.blockStates[idx];
                         world.setSignal(l, x, y, state);
                     }
                 }
             }
-
-            System.out.println("Map loaded successfully: " + file);
-            System.out.println("Total blocks loaded: " + blocksLoaded);
-
             return true;
-
         } catch (IOException e) {
-            System.err.println("Failed to load map: " + e.getMessage());
             return false;
         }
     }
