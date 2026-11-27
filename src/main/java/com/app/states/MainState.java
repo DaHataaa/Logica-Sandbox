@@ -75,7 +75,6 @@ public class MainState implements State {
     private int lastSelectionSoundWidth = -1;
     private int lastSelectionSoundHeight = -1;
     private long lastSelectionSoundNanos = 0;
-    private static final long SELECTION_SOUND_MIN_INTERVAL = 25_000_000L;
 
     private boolean keyboardCursorActive = false;
     private int keyboardCursorX = 0;
@@ -96,6 +95,13 @@ public class MainState implements State {
     private String[] debugLines = new String[5];
     private double debugBoxW = 640;
     private double debugBoxH = 240;
+
+    private boolean fHeld = false;
+    private boolean rHeld = false;
+    private long lastSoundNanos = 0;
+    private static final long MIN_SOUND_INTERVAL_NANOS = 45_000_000L; // не чаще ~22 раз в сек
+    private static final long SELECTION_SOUND_MIN_INTERVAL = 60_000_000L; // вместо 25 мс
+
 
     public MainState() {
         this(null);
@@ -186,20 +192,26 @@ public class MainState implements State {
 
             KeyCode code = event.getCode();
 
-            boolean isArrow = code == KeyCode.LEFT || code == KeyCode.RIGHT
-                    || code == KeyCode.UP || code == KeyCode.DOWN;
-
-            if (isArrow) {
+            // Стрелки: перехватываем до фокуса UI-элементов и двигаем курсор
+            if (code == KeyCode.LEFT || code == KeyCode.RIGHT
+                    || code == KeyCode.UP || code == KeyCode.DOWN) {
                 handleKeyboardCursorMove(code);
+                // Если зажата F — сразу ставим блок в новую клетку (сработает только если блок новый)
+                if (fHeld) {
+                    handleFAction();
+                }
+                // Если зажата R — сразу удаляем блок в новой клетке
+                if (rHeld && keyboardCursorActive) {
+                    removeBlockAtCell(keyboardCursorX, keyboardCursorY);
+                }
                 event.consume();
                 return;
             }
 
+            // Зум на +/-
             if (code == KeyCode.EQUALS || code == KeyCode.ADD
                     || code == KeyCode.MINUS || code == KeyCode.SUBTRACT) {
-
                 boolean zoomIn = code == KeyCode.EQUALS || code == KeyCode.ADD;
-
                 double zx, zy;
                 if (keyboardCursorActive) {
                     zx = camera.worldToScreenX((keyboardCursorX + 0.5) * camera.getBaseCellSize());
@@ -218,11 +230,7 @@ public class MainState implements State {
                     zy = renderer.getCanvas().getHeight() / 2.0;
                 }
 
-                if (zoomIn) {
-                    camera.zoomAt(1.1, zx, zy);
-                } else {
-                    camera.zoomAt(0.9, zx, zy);
-                }
+                camera.zoomAt(zoomIn ? 1.1 : 0.9, zx, zy);
                 SpriteManager.getInstance().trimRotatedCache();
                 requestRender();
                 event.consume();
@@ -239,29 +247,36 @@ public class MainState implements State {
                 return;
             }
 
+            // F: игнорируем системный автоповтор при удержании
             if (code == KeyCode.F && !event.isControlDown()) {
-                handleFAction();
-                fHandledOnPress = true;
+                if (!fHeld) {
+                    fHeld = true;
+                    handleFAction();
+                }
                 event.consume();
                 return;
             }
 
+            // R: игнорируем системный автоповтор и всегда делаем consume()
             if (code == KeyCode.R && !event.isControlDown()) {
-                handleRAction();
+                if (!rHeld) {
+                    rHeld = true;
+                    handleRAction();
+                }
                 event.consume();
+                return;
             }
         });
 
         scene.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
             if (event.getTarget() instanceof TextInputControl) return;
-            if (event.getCode() == KeyCode.F) {
-                if (!fHandledOnPress) {
-                    handleFAction();
-                }
-                fHandledOnPress = false;
+            KeyCode code = event.getCode();
+
+            if (code == KeyCode.F) {
+                fHeld = false;
                 event.consume();
-            }
-            if (event.getCode() == KeyCode.R) {
+            } else if (code == KeyCode.R) {
+                rHeld = false;
                 if (deleteMode) {
                     deleteMode = false;
                     deleteTimer.stop();
@@ -271,14 +286,11 @@ public class MainState implements State {
         });
     }
 
-    // ============================================================
-    // UNDO / REDO helpers
-    // ============================================================
 
-    private void changeCellWithUndo(int layer, int x, int y,
-                                    String newBlock,
-                                    String stepLabel) {
-        if (!isValidCell(x, y)) return;
+    private boolean changeCellWithUndo(int layer, int x, int y,
+                                       String newBlock,
+                                       String stepLabel) {
+        if (!isValidCell(x, y)) return false;
 
         String oldBlock = world.getBlock(layer, x, y);
         boolean oldSignal = world.getSignal(layer, x, y);
@@ -286,7 +298,7 @@ public class MainState implements State {
         if (oldBlock == null) oldBlock = "0";
         if (newBlock == null || newBlock.isEmpty()) newBlock = "0";
 
-        if (oldBlock.equals(newBlock)) return;
+        if (oldBlock.equals(newBlock)) return false;
 
         world.setBlock(layer, x, y, newBlock);
         boolean newSignal = world.getSignal(layer, x, y);
@@ -297,7 +309,9 @@ public class MainState implements State {
         undoManager.beginStep(stepLabel);
         undoManager.recordChange(layer, x, y, oldBlock, actualNew, oldSignal, newSignal);
         undoManager.commitStep();
+        return true;
     }
+
 
     // ============================================================
     // ACTIONS
@@ -498,6 +512,9 @@ public class MainState implements State {
     private void placeBlockAtCell(int cellX, int cellY) {
         if (!isValidCell(cellX, cellY)) return;
 
+        int layer = world.getCurrentLayer();
+        if (world.blockTypes[world.getIdx(layer, cellX, cellY)] == World.TYPE_TEXT) return;
+
         BlockType type = palette.getSelectedBlock();
         Direction dir = palette.getCurrentDirection();
 
@@ -506,25 +523,22 @@ public class MainState implements State {
             blockStr += "_f" + dir.getCode();
         }
 
-        changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, blockStr, "place");
-        simulationEngine.markWorldChanged();
-        AudioManager.getInstance().playPlacement();
-        System.out.println("Placed (F): " + blockStr + " at (" + cellX + ", " + cellY
-                + ") on layer " + world.getCurrentLayer());
-        requestRender();
+        if (changeCellWithUndo(layer, cellX, cellY, blockStr, "place")) {
+            simulationEngine.markWorldChanged();
+            AudioManager.getInstance().playPlacement();
+            requestRender();
+        }
     }
 
     private void removeBlockAtCell(int cellX, int cellY) {
         if (!isValidCell(cellX, cellY)) return;
-        String block = world.getBlock(world.getCurrentLayer(), cellX, cellY);
-        if (block != null && !block.equals("0")) {
-            changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, "0", "remove");
+        if (changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, "0", "remove")) {
             simulationEngine.markWorldChanged();
             AudioManager.getInstance().playRemove();
-            System.out.println("Removed (kb) at (" + cellX + ", " + cellY + ")");
             requestRender();
         }
     }
+
 
     private void initDeleteTimer() {
         deleteTimer = new AnimationTimer() {
@@ -599,7 +613,8 @@ public class MainState implements State {
 
         if (canvasX < 0 || canvasX > renderer.getCanvas().getWidth() ||
                 canvasY < 0 || canvasY > renderer.getCanvas().getHeight()) {
-            lastPlacedCellX = -1; lastPlacedCellY = -1;
+            lastPlacedCellX = -1;
+            lastPlacedCellY = -1;
             return;
         }
 
@@ -624,12 +639,16 @@ public class MainState implements State {
             String blockStr = type.getName();
             if (type.hasDirection()) blockStr += "_f" + dir.getCode();
 
-            changeCellWithUndo(layer, cellX, cellY, blockStr, "place");
-            simulationEngine.markWorldChanged();
-            AudioManager.getInstance().playPlacement();
-            requestRender();
+            if (changeCellWithUndo(layer, cellX, cellY, blockStr, "place")) {
+                simulationEngine.markWorldChanged();
+                if (canPlaySound()) {
+                    AudioManager.getInstance().playPlacement();
+                }
+                requestRender();
+            }
         } else {
-            lastPlacedCellX = -1; lastPlacedCellY = -1;
+            lastPlacedCellX = -1;
+            lastPlacedCellY = -1;
         }
     }
 
@@ -652,16 +671,16 @@ public class MainState implements State {
         int cellY = (int) Math.floor(worldY / baseCellSize);
 
         if (cellX >= 0 && cellX < world.getSize() && cellY >= 0 && cellY < world.getSize()) {
-            String block = world.getBlock(world.getCurrentLayer(), cellX, cellY);
-            if (block != null && !block.equals("0")) {
-                changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, "0", "remove");
+            if (changeCellWithUndo(world.getCurrentLayer(), cellX, cellY, "0", "remove")) {
                 simulationEngine.markWorldChanged();
-                AudioManager.getInstance().playRemove();
-                System.out.println("Removed at (" + cellX + ", " + cellY + ")");
+                if (canPlaySound()) {
+                    AudioManager.getInstance().playRemove();
+                }
                 requestRender();
             }
         }
     }
+
 
     private void rebuildDebugLines() {
         int dirty   = simulationEngine.getDirtyCount();
@@ -990,6 +1009,8 @@ public class MainState implements State {
         keyboardCursorActive = false;
         panning = false;
         deleteMode = false;
+        fHeld = false;
+        rHeld = false;
         lastPlacedCellX = -1;
         lastPlacedCellY = -1;
     }
@@ -1133,14 +1154,18 @@ public class MainState implements State {
                 if (event.isShiftDown()) {
                     if (undoManager.redo()) {
                         simulationEngine.markWorldChanged();
-                        AudioManager.getInstance().playInsert();
+                        if (canPlaySound()) {
+                            AudioManager.getInstance().playInsert();
+                        }
                         requestRender();
                         System.out.println("Redo");
                     }
                 } else {
                     if (undoManager.undo()) {
                         simulationEngine.markWorldChanged();
-                        AudioManager.getInstance().playRemove();
+                        if (canPlaySound()) {
+                            AudioManager.getInstance().playRemove();
+                        }
                         requestRender();
                         System.out.println("Undo");
                     }
@@ -1216,24 +1241,33 @@ public class MainState implements State {
                 requestRender();
                 break;
 
-            case R:
-                handleRAction();
+            case W:
+                palette.setDirection(Direction.UP);
                 break;
 
-            case W: palette.setDirection(Direction.UP); break;
-            case A: palette.setDirection(Direction.LEFT); break;
-            case S: palette.setDirection(Direction.DOWN); break;
+            case A:
+                palette.setDirection(Direction.LEFT);
+                break;
+
+            case S:
+                palette.setDirection(Direction.DOWN);
+                break;
+
             case D:
                 if (previewMode) {
                     previewMode = false;
                     selection.clear();
                     Selection.resetClipboard();
-                    AudioManager.getInstance().playDeselect();
+                    if (canPlaySound()) {
+                        AudioManager.getInstance().playDeselect();
+                    }
                     requestRender();
                     System.out.println("Preview mode off, clipboard cleared");
                 } else if (selection.hasSelection()) {
                     selection.clear();
-                    AudioManager.getInstance().playDeselect();
+                    if (canPlaySound()) {
+                        AudioManager.getInstance().playDeselect();
+                    }
                     requestRender();
                 } else {
                     palette.setDirection(Direction.RIGHT);
@@ -1245,7 +1279,9 @@ public class MainState implements State {
                     cutSelectionWithUndo();
                     simulationEngine.markWorldChanged();
                     previewMode = true;
-                    AudioManager.getInstance().playCopy();
+                    if (canPlaySound()) {
+                        AudioManager.getInstance().playCopy();
+                    }
                     requestRender();
                     System.out.println("Cut: selection removed, buffer filled, preview mode activated");
                 }
@@ -1255,7 +1291,9 @@ public class MainState implements State {
                 if (selection.hasSelection() && !previewMode && !selecting) {
                     selection.copyToClipboard();
                     previewMode = true;
-                    AudioManager.getInstance().playCopy();
+                    if (canPlaySound()) {
+                        AudioManager.getInstance().playCopy();
+                    }
                     requestRender();
                     System.out.println("Copy: buffer filled, preview mode activated");
                 }
@@ -1275,7 +1313,9 @@ public class MainState implements State {
                     }
                     pasteWithUndo(px, py);
                     simulationEngine.markWorldChanged();
-                    AudioManager.getInstance().playInsert();
+                    if (canPlaySound()) {
+                        AudioManager.getInstance().playInsert();
+                    }
                     requestRender();
                     System.out.println("Paste done at (" + px + ", " + py + ")");
                 }
@@ -1294,6 +1334,8 @@ public class MainState implements State {
             default: break;
         }
     }
+
+
 
     private void pasteWithUndo(int px, int py) {
         List<List<String>> clip = Selection.getClipboardBlocks();
@@ -1327,6 +1369,16 @@ public class MainState implements State {
         undoManager.commitStep();
     }
 
+    private boolean canPlaySound() {
+        long now = System.nanoTime();
+        if (now - lastSoundNanos < MIN_SOUND_INTERVAL_NANOS) {
+            return false;
+        }
+        lastSoundNanos = now;
+        return true;
+    }
+
+
     @Override
     public void handleKeyReleased(KeyEvent event) {
         if (event.getCode() == KeyCode.E && selecting) {
@@ -1345,18 +1397,13 @@ public class MainState implements State {
             selection.updateSelection(endX, endY);
             selection.finishSelection(world);
 
-            AudioManager.getInstance().playSelect();
+            if (canPlaySound()) {
+                AudioManager.getInstance().playSelect();
+            }
 
             requestRender();
             System.out.println("Selection finished: size "
                     + selection.getWidth() + "x" + selection.getHeight());
-        }
-
-        if (event.getCode() == KeyCode.R) {
-            if (deleteMode) {
-                deleteMode = false;
-                deleteTimer.stop();
-            }
         }
     }
 
