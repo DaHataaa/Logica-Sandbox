@@ -2,7 +2,7 @@
   "window_width": 1600,
   "window_height": 900,
   "fullscreen": false,
-  "simulation_speed": 120,
+  "simulation_speed": 1000,
   "available_speeds": [
     1,
     10,
@@ -13,6 +13,7 @@
   "cell_size_min": 2,
   "cell_size_max": 100,
   "default_cell_size": 32,
+  "script_run_delay": 3,
   "world_size": 512,
   "layers": 5,
   "current_texturepack": "Classic",

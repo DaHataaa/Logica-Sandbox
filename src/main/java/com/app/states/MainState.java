@@ -2,21 +2,13 @@ package com.app.states;
 
 import com.app.Config;
 import com.app.audio.AudioManager;
-import com.app.core.BlockType;
-import com.app.core.Direction;
-import com.app.core.World;
-import com.app.core.SimulationEngine;
-import com.app.core.Selection;
-import com.app.core.MapManager;
-import com.app.core.UndoManager;
+import com.app.core.*;
 import com.app.graphics.Camera;
 import com.app.graphics.CameraFollower;
 import com.app.graphics.GridRenderer;
 import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
-import com.app.ui.BlockPalette;
-import com.app.ui.HelpDialog;
-import com.app.ui.TextEditorDialog;
+import com.app.ui.*;
 import javafx.animation.AnimationTimer;
 import javafx.geometry.Point2D;
 import javafx.scene.Scene;
@@ -99,8 +91,13 @@ public class MainState implements State {
     private boolean fHeld = false;
     private boolean rHeld = false;
     private long lastSoundNanos = 0;
-    private static final long MIN_SOUND_INTERVAL_NANOS = 45_000_000L; // не чаще ~22 раз в сек
-    private static final long SELECTION_SOUND_MIN_INTERVAL = 60_000_000L; // вместо 25 мс
+    private static final long MIN_SOUND_INTERVAL_NANOS = 45_000_000L;
+    private static final long SELECTION_SOUND_MIN_INTERVAL = 60_000_000L;
+
+    private boolean rmbCandidate = false;   // ПКМ нажат, ещё не поняли — пан или меню
+    private double rmbStartX, rmbStartY;
+
+    private ScriptInterpreter currentInterpreter;
 
 
     public MainState() {
@@ -171,7 +168,6 @@ public class MainState implements State {
             }
         });
 
-        // === DEBUG ===
         this.debugOverlay = Config.getInstance().isDebugOverlay();
         simulationEngine.setTickProfiling(debugOverlay);
         simulationEngine.setTickSampleEvery(Config.getInstance().getDebugSampleEvery());
@@ -192,15 +188,12 @@ public class MainState implements State {
 
             KeyCode code = event.getCode();
 
-            // Стрелки: перехватываем до фокуса UI-элементов и двигаем курсор
             if (code == KeyCode.LEFT || code == KeyCode.RIGHT
                     || code == KeyCode.UP || code == KeyCode.DOWN) {
                 handleKeyboardCursorMove(code);
-                // Если зажата F — сразу ставим блок в новую клетку (сработает только если блок новый)
                 if (fHeld) {
                     handleFAction();
                 }
-                // Если зажата R — сразу удаляем блок в новой клетке
                 if (rHeld && keyboardCursorActive) {
                     removeBlockAtCell(keyboardCursorX, keyboardCursorY);
                 }
@@ -208,7 +201,6 @@ public class MainState implements State {
                 return;
             }
 
-            // Зум на +/-
             if (code == KeyCode.EQUALS || code == KeyCode.ADD
                     || code == KeyCode.MINUS || code == KeyCode.SUBTRACT) {
                 boolean zoomIn = code == KeyCode.EQUALS || code == KeyCode.ADD;
@@ -237,6 +229,12 @@ public class MainState implements State {
                 return;
             }
 
+            if (code == KeyCode.F2) {
+                openScriptsDialog();
+                event.consume();
+                return;
+            }
+
             if (code == KeyCode.F3) {
                 debugOverlay = !debugOverlay;
                 simulationEngine.setTickProfiling(debugOverlay);
@@ -247,7 +245,6 @@ public class MainState implements State {
                 return;
             }
 
-            // F: игнорируем системный автоповтор при удержании
             if (code == KeyCode.F && !event.isControlDown()) {
                 if (!fHeld) {
                     fHeld = true;
@@ -257,7 +254,6 @@ public class MainState implements State {
                 return;
             }
 
-            // R: игнорируем системный автоповтор и всегда делаем consume()
             if (code == KeyCode.R && !event.isControlDown()) {
                 if (!rHeld) {
                     rHeld = true;
@@ -286,6 +282,187 @@ public class MainState implements State {
         });
     }
 
+    private void openScriptsDialog() {
+        Stage owner = null;
+        if (root.getScene() != null && root.getScene().getWindow() instanceof Stage) {
+            owner = (Stage) root.getScene().getWindow();
+        }
+        ScriptsDialog.show(owner, (code, delaySeconds) -> {
+            if (delaySeconds <= 0) {
+                executeScript(code);
+            } else {
+                javafx.animation.PauseTransition pt =
+                        new javafx.animation.PauseTransition(javafx.util.Duration.seconds(delaySeconds));
+                pt.setOnFinished(ev -> executeScript(code));
+                pt.play();
+            }
+            javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
+        });
+    }
+
+
+
+    /** Выполнение скрипта. */
+    private void executeScript(String code) {
+        // Если предыдущий скрипт ещё крутится — останавливаем
+        if (currentInterpreter != null) {
+            currentInterpreter.stop();
+            System.out.println("[SCRIPT] Previous script interrupted.");
+        }
+
+        currentInterpreter = new ScriptInterpreter(code, this::handleScriptCommand, simulationEngine);
+
+        currentInterpreter.setOnComplete(() -> {
+            System.out.println("[SCRIPT] Execution finished.");
+            currentInterpreter = null;
+            javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
+        });
+
+        System.out.println("[SCRIPT] Starting execution...");
+        currentInterpreter.start();
+    }
+
+    /** Обработчик "мировых" команд скрипта. */
+    private void handleScriptCommand(String command, String[] args) {
+        int layer = world.getCurrentLayer();
+
+        switch (command) {
+            case "PLACE": {
+                // PLACE <block> <x> <y>
+                if (args.length < 3) {
+                    System.err.println("[SCRIPT] PLACE requires: <block> <x> <y>");
+                    return;
+                }
+                String blockName = args[0].toLowerCase();
+                int x, y;
+                try {
+                    x = Integer.parseInt(args[1]);
+                    y = Integer.parseInt(args[2]);
+                } catch (NumberFormatException e) {
+                    System.err.println("[SCRIPT] Invalid coords in: PLACE " + String.join(" ", args));
+                    return;
+                }
+                if (!isValidCell(x, y)) {
+                    System.err.println("[SCRIPT] Cell out of bounds: " + x + "," + y);
+                    return;
+                }
+                // Если блок имеет направление, а его не указали — берём текущее из палитры
+                String blockStr = blockName;
+                BlockType type = findBlockType(blockName);
+                if (type != null && type.hasDirection()) {
+                    Direction dir = palette.getCurrentDirection();
+                    blockStr = blockName + "_f" + dir.getCode();
+                }
+                if (changeCellWithUndo(layer, x, y, blockStr, "script-place")) {
+                    simulationEngine.markWorldChanged();
+                    requestRender();
+                }
+                break;
+            }
+
+            case "PLACE_DIR": {
+                // PLACE_DIR <block> <x> <y> <u|d|l|r>
+                if (args.length < 4) {
+                    System.err.println("[SCRIPT] PLACE_DIR requires: <block> <x> <y> <dir>");
+                    return;
+                }
+                String blockName = args[0].toLowerCase();
+                int x, y;
+                try {
+                    x = Integer.parseInt(args[1]);
+                    y = Integer.parseInt(args[2]);
+                } catch (NumberFormatException e) {
+                    System.err.println("[SCRIPT] Invalid coords in: PLACE_DIR");
+                    return;
+                }
+                Direction dir = Direction.fromChar(args[3].charAt(0));
+                if (!isValidCell(x, y)) {
+                    System.err.println("[SCRIPT] Cell out of bounds: " + x + "," + y);
+                    return;
+                }
+                String blockStr = blockName + "_f" + dir.getCode();
+                if (changeCellWithUndo(layer, x, y, blockStr, "script-place")) {
+                    simulationEngine.markWorldChanged();
+                    requestRender();
+                }
+                break;
+            }
+
+            case "REMOVE": {
+                // REMOVE <x> <y>
+                if (args.length < 2) {
+                    System.err.println("[SCRIPT] REMOVE requires: <x> <y>");
+                    return;
+                }
+                int x, y;
+                try {
+                    x = Integer.parseInt(args[0]);
+                    y = Integer.parseInt(args[1]);
+                } catch (NumberFormatException e) {
+                    System.err.println("[SCRIPT] Invalid coords in: REMOVE");
+                    return;
+                }
+                if (!isValidCell(x, y)) return;
+                if (changeCellWithUndo(layer, x, y, "0", "script-remove")) {
+                    simulationEngine.markWorldChanged();
+                    requestRender();
+                }
+                break;
+            }
+
+            case "SET_SPEED": {
+                // SET_SPEED <0..N>
+                if (args.length < 1) return;
+                try {
+                    int speed = Integer.parseInt(args[0]);
+                    palette.setCurrentSpeed(speed);
+                    onSpeedChange();
+                } catch (NumberFormatException ignored) {}
+                break;
+            }
+
+            case "PAUSE": {
+                if (simulationEngine.isRunning()) {
+                    simulationEngine.pause();
+                    palette.updateSimulationStatus(false);
+                }
+                break;
+            }
+
+            case "RESUME": {
+                if (!simulationEngine.isRunning()) {
+                    simulationEngine.start();
+                    palette.updateSimulationStatus(true);
+                }
+                break;
+            }
+
+            case "LAYER": {
+                // LAYER <n>
+                if (args.length < 1) return;
+                try {
+                    int n = Integer.parseInt(args[0]);
+                    while (world.getCurrentLayer() < n) world.nextLayer();
+                    while (world.getCurrentLayer() > n) world.previousLayer();
+                    palette.updateLayer(world.getCurrentLayer());
+                    requestRender();
+                } catch (NumberFormatException ignored) {}
+                break;
+            }
+
+            default:
+                System.err.println("[SCRIPT] Unknown command: " + command);
+                break;
+        }
+    }
+
+    /** Поиск BlockType по имени (без учёта регистра). */
+    private BlockType findBlockType(String name) {
+        for (BlockType t : BlockType.values()) {
+            if (t.getName().equalsIgnoreCase(name)) return t;
+        }
+        return null;
+    }
 
     private boolean changeCellWithUndo(int layer, int x, int y,
                                        String newBlock,
@@ -311,11 +488,6 @@ public class MainState implements State {
         undoManager.commitStep();
         return true;
     }
-
-
-    // ============================================================
-    // ACTIONS
-    // ============================================================
 
     private void handleRAction() {
         if (selecting || previewMode || panning) return;
@@ -539,7 +711,6 @@ public class MainState implements State {
         }
     }
 
-
     private void initDeleteTimer() {
         deleteTimer = new AnimationTimer() {
             @Override
@@ -680,7 +851,6 @@ public class MainState implements State {
             }
         }
     }
-
 
     private void rebuildDebugLines() {
         int dirty   = simulationEngine.getDirtyCount();
@@ -1147,9 +1317,11 @@ public class MainState implements State {
 
     @Override
     public void handleKeyPressed(KeyEvent event) {
+        // Обработка Ctrl-комбинаций
         if (event.isControlDown()) {
             KeyCode code = event.getCode();
 
+            // Undo/Redo
             if (code == KeyCode.Z) {
                 if (event.isShiftDown()) {
                     if (undoManager.redo()) {
@@ -1174,6 +1346,31 @@ public class MainState implements State {
                 return;
             }
 
+            // Rotate CW (Ctrl+D)
+            if (code == KeyCode.D) {
+                boolean hasSel = selection.hasSelection();
+                boolean hasClip = Selection.hasClipboard() || previewMode;
+                if (hasSel || hasClip) {
+                    applyTransform(hasSel, hasClip, TransformKind.ROTATE_CW, MainState::rotateCw);
+                    if (canPlaySound()) AudioManager.getInstance().playSelect(); // или другой звук
+                    event.consume();
+                    return;
+                }
+            }
+
+            // Rotate CCW (Ctrl+A)
+            if (code == KeyCode.A) {
+                boolean hasSel = selection.hasSelection();
+                boolean hasClip = Selection.hasClipboard() || previewMode;
+                if (hasSel || hasClip) {
+                    applyTransform(hasSel, hasClip, TransformKind.ROTATE_CCW, MainState::rotateCcw);
+                    if (canPlaySound()) AudioManager.getInstance().playSelect();
+                    event.consume();
+                    return;
+                }
+            }
+
+            // Save As (Ctrl+Shift+S)
             if (event.isShiftDown()) {
                 if (code == KeyCode.S) {
                     saveAsMap();
@@ -1181,6 +1378,7 @@ public class MainState implements State {
                     return;
                 }
             } else {
+                // Save (Ctrl+S)
                 if (code == KeyCode.S) {
                     saveMap();
                     event.consume();
@@ -1189,6 +1387,34 @@ public class MainState implements State {
             }
         }
 
+        // Обработка Shift-комбинаций (без Ctrl)
+        if (event.isShiftDown() && !event.isControlDown()) {
+            KeyCode code = event.getCode();
+            boolean hasSel = selection.hasSelection();
+            boolean hasClip = Selection.hasClipboard() || previewMode;
+
+            // Flip V (Shift+W or Shift+S) - вертикальное отражение
+            if (code == KeyCode.W || code == KeyCode.S) {
+                if (hasSel || hasClip) {
+                    applyTransform(hasSel, hasClip, TransformKind.FLIP_V, MainState::flipV);
+                    if (canPlaySound()) AudioManager.getInstance().playSelect();
+                    event.consume();
+                    return;
+                }
+            }
+
+            // Flip H (Shift+A or Shift+D) - горизонтальное отражение
+            if (code == KeyCode.A || code == KeyCode.D) {
+                if (hasSel || hasClip) {
+                    applyTransform(hasSel, hasClip, TransformKind.FLIP_H, MainState::flipH);
+                    if (canPlaySound()) AudioManager.getInstance().playSelect();
+                    event.consume();
+                    return;
+                }
+            }
+        }
+
+        // Остальные клавиши (без модификаторов Ctrl/Shift)
         switch (event.getCode()) {
             case ESCAPE:
                 nextState = new MenuState();
@@ -1246,31 +1472,40 @@ public class MainState implements State {
                 break;
 
             case A:
-                palette.setDirection(Direction.LEFT);
+                // Если не Shift+A (который уже обработан выше как Flip H), то просто направление
+                if (!event.isShiftDown()) {
+                    palette.setDirection(Direction.LEFT);
+                }
                 break;
 
             case S:
-                palette.setDirection(Direction.DOWN);
+                // Если не Shift+S (который уже обработан выше как Flip V), то просто направление
+                if (!event.isShiftDown()) {
+                    palette.setDirection(Direction.DOWN);
+                }
                 break;
 
             case D:
-                if (previewMode) {
-                    previewMode = false;
-                    selection.clear();
-                    Selection.resetClipboard();
-                    if (canPlaySound()) {
-                        AudioManager.getInstance().playDeselect();
+                // Если не Ctrl+D и не Shift+D (уже обработаны выше)
+                if (!event.isControlDown() && !event.isShiftDown()) {
+                    if (previewMode) {
+                        previewMode = false;
+                        selection.clear();
+                        Selection.resetClipboard();
+                        if (canPlaySound()) {
+                            AudioManager.getInstance().playDeselect();
+                        }
+                        requestRender();
+                        System.out.println("Preview mode off, clipboard cleared");
+                    } else if (selection.hasSelection()) {
+                        selection.clear();
+                        if (canPlaySound()) {
+                            AudioManager.getInstance().playDeselect();
+                        }
+                        requestRender();
+                    } else {
+                        palette.setDirection(Direction.RIGHT);
                     }
-                    requestRender();
-                    System.out.println("Preview mode off, clipboard cleared");
-                } else if (selection.hasSelection()) {
-                    selection.clear();
-                    if (canPlaySound()) {
-                        AudioManager.getInstance().playDeselect();
-                    }
-                    requestRender();
-                } else {
-                    palette.setDirection(Direction.RIGHT);
                 }
                 break;
 
@@ -1335,8 +1570,6 @@ public class MainState implements State {
         }
     }
 
-
-
     private void pasteWithUndo(int px, int py) {
         List<List<String>> clip = Selection.getClipboardBlocks();
         if (clip.isEmpty()) return;
@@ -1369,6 +1602,283 @@ public class MainState implements State {
         undoManager.commitStep();
     }
 
+    private static Direction rotateCw(Direction d) {
+        switch (d) {
+            case UP: return Direction.RIGHT;
+            case RIGHT: return Direction.DOWN;
+            case DOWN: return Direction.LEFT;
+            case LEFT: return Direction.UP;
+        }
+        return d;
+    }
+
+    private static Direction rotateCcw(Direction d) {
+        switch (d) {
+            case UP: return Direction.LEFT;
+            case LEFT: return Direction.DOWN;
+            case DOWN: return Direction.RIGHT;
+            case RIGHT: return Direction.UP;
+        }
+        return d;
+    }
+
+    private static Direction flipH(Direction d) {
+        switch (d) {
+            case LEFT: return Direction.RIGHT;
+            case RIGHT: return Direction.LEFT;
+            default: return d;
+        }
+    }
+
+    private static Direction flipV(Direction d) {
+        switch (d) {
+            case UP: return Direction.DOWN;
+            case DOWN: return Direction.UP;
+            default: return d;
+        }
+    }
+
+    private boolean transformSelection(java.util.function.UnaryOperator<Direction> dirOp,
+                                       TransformKind kind) {
+        if (!selection.hasSelection()) return false;
+
+        int layer = world.getCurrentLayer();
+        int minX = Math.min(selection.getStartX(), selection.getEndX());
+        int maxX = Math.max(selection.getStartX(), selection.getEndX());
+        int minY = Math.min(selection.getStartY(), selection.getEndY());
+        int maxY = Math.max(selection.getStartY(), selection.getEndY());
+
+        int w = maxX - minX + 1;
+        int h = maxY - minY + 1;
+
+        String[][] src = new String[h][w];
+        boolean[][] srcSignal = new boolean[h][w];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                String b = world.getBlock(layer, minX + x, minY + y);
+                src[y][x] = (b == null) ? "0" : b;
+                srcSignal[y][x] = world.getSignal(layer, minX + x, minY + y);
+            }
+        }
+
+        String[][] dst;
+        boolean[][] dstSignal;
+        int newW, newH;
+        if (kind == TransformKind.ROTATE_CW || kind == TransformKind.ROTATE_CCW) {
+            newW = h; newH = w;
+        } else {
+            newW = w; newH = h;
+        }
+        dst = new String[newH][newW];
+        dstSignal = new boolean[newH][newW];
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int nx, ny;
+                switch (kind) {
+                    case ROTATE_CW:  nx = h - 1 - y; ny = x;         break;
+                    case ROTATE_CCW: nx = y;         ny = w - 1 - x; break;
+                    case FLIP_H:     nx = w - 1 - x; ny = y;         break;
+                    case FLIP_V:     nx = x;         ny = h - 1 - y; break;
+                    default:         nx = x;         ny = y;         break;
+                }
+                dst[ny][nx] = transformBlockString(src[y][x], dirOp);
+                dstSignal[ny][nx] = srcSignal[y][x];
+            }
+        }
+
+        // Очищаем старую область
+        undoManager.beginStep("transform");
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int wx = minX + x, wy = minY + y;
+                String ob = world.getBlock(layer, wx, wy);
+                boolean os = world.getSignal(layer, wx, wy);
+                if (ob != null && !ob.equals("0")) {
+                    world.removeBlock(layer, wx, wy);
+                    undoManager.recordChange(layer, wx, wy, ob, "0", os, false);
+                }
+            }
+        }
+
+        // Пишем новую (в той же левой-верхней точке, размер мог измениться)
+        for (int y = 0; y < newH; y++) {
+            for (int x = 0; x < newW; x++) {
+                int wx = minX + x, wy = minY + y;
+                if (!isValidCell(wx, wy)) continue;
+                String nb = dst[y][x];
+                if (nb == null || nb.equals("0")) continue;
+                String ob = world.getBlock(layer, wx, wy);
+                boolean os = world.getSignal(layer, wx, wy);
+                world.setBlock(layer, wx, wy, nb);
+                boolean ns = world.getSignal(layer, wx, wy);
+                undoManager.recordChange(layer, wx, wy, ob, nb, os, ns);
+            }
+        }
+        undoManager.commitStep();
+
+        // Обновляем рамку выделения под новые размеры
+        selection.startSelection(minX, minY, layer);
+        selection.updateSelection(minX + newW - 1, minY + newH - 1);
+        selection.finishSelection(world);
+
+        simulationEngine.markWorldChanged();
+        requestRender();
+        return true;
+    }
+
+    private boolean transformClipboard(java.util.function.UnaryOperator<Direction> dirOp,
+                                       TransformKind kind) {
+        List<List<String>> clip = Selection.getClipboardBlocks();
+        if (clip == null || clip.isEmpty()) return false;
+
+        int h = clip.size();
+        int w = clip.get(0).size();
+
+        // 1) Новая геометрия
+        String[][] src = new String[h][w];
+        for (int y = 0; y < h; y++) {
+            List<String> row = clip.get(y);
+            for (int x = 0; x < w; x++) {
+                src[y][x] = (x < row.size()) ? row.get(x) : "0";
+            }
+        }
+
+        String[][] dst;
+        if (kind == TransformKind.ROTATE_CW || kind == TransformKind.ROTATE_CCW) {
+            dst = new String[w][h];
+        } else {
+            dst = new String[h][w];
+        }
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                String b = src[y][x];
+                if (b == null) b = "0";
+
+                int nx, ny;
+                switch (kind) {
+                    case ROTATE_CW:  nx = h - 1 - y; ny = x;          break;
+                    case ROTATE_CCW: nx = y;         ny = w - 1 - x;  break;
+                    case FLIP_H:     nx = w - 1 - x; ny = y;          break;
+                    case FLIP_V:     nx = x;         ny = h - 1 - y;  break;
+                    default:         nx = x;         ny = y;          break;
+                }
+
+                dst[ny][nx] = transformBlockString(b, dirOp);
+            }
+        }
+
+        // 2) Записываем обратно в буфер (мутация in-place)
+        int newH = dst.length;
+        int newW = dst[0].length;
+        clip.clear();
+        for (int y = 0; y < newH; y++) {
+            List<String> row = new java.util.ArrayList<>(newW);
+            for (int x = 0; x < newW; x++) {
+                row.add(dst[y][x] != null ? dst[y][x] : "0");
+            }
+            clip.add(row);
+        }
+
+        requestRender();
+        return true;
+    }
+
+    /** Поворот/флип одной строки блока "<name>_<state><dir>" → новое направление. */
+    private static String transformBlockString(String b,
+                                               java.util.function.UnaryOperator<Direction> dirOp) {
+        if (b == null || b.equals("0")) return b;
+        if (b.startsWith("text_") || b.equals("power") || b.equals("peg")) return b;
+
+        int us = b.indexOf('_');
+        if (us < 0 || us + 2 >= b.length()) return b;
+
+        String name = b.substring(0, us);
+        char state = b.charAt(us + 1);
+        char dirC = b.charAt(us + 2);
+        Direction d = Direction.fromChar(dirC);
+        Direction nd = dirOp.apply(d);
+        if (nd == d) return b;
+        return name + "_" + state + nd.getCode();
+    }
+
+    private enum TransformKind { ROTATE_CW, ROTATE_CCW, FLIP_H, FLIP_V }
+
+
+
+    private void showEditorContextMenu(double screenX, double screenY) {
+        Stage owner = null;
+        if (root.getScene() != null && root.getScene().getWindow() instanceof Stage) {
+            owner = (Stage) root.getScene().getWindow();
+        }
+        if (owner == null) return;
+
+        boolean hasSel = selection.hasSelection();
+        boolean hasClip = Selection.hasClipboard() || previewMode;
+
+        if (!hasSel && !hasClip) return;
+
+        java.util.List<ContextMenuPopup.Item> items = new java.util.ArrayList<>();
+
+        // ===== РЕЖИМ "В РУКАХ" (буфер) =====
+        if (hasClip) {
+            items.add(new ContextMenuPopup.Item("PASTE", () -> {
+                int[] c = getActiveCursorCell();
+                if (isValidCell(c[0], c[1])) {
+                    pasteWithUndo(c[0], c[1]);
+                    simulationEngine.markWorldChanged();
+                    requestRender();
+                }
+            }));
+            items.add(new ContextMenuPopup.Item("DESELECT", () -> {
+                previewMode = false;
+                selection.clear();
+                Selection.resetClipboard();
+                requestRender();
+            }));
+        }
+        // ===== РЕЖИМ "ВЫДЕЛЕНО" (буфера нет) =====
+        else if (hasSel) {
+            items.add(new ContextMenuPopup.Item("COPY", () -> {
+                selection.copyToClipboard();
+                previewMode = true;
+                requestRender();
+            }));
+            items.add(new ContextMenuPopup.Item("CUT", () -> {
+                cutSelectionWithUndo();
+                previewMode = true;
+                requestRender();
+            }));
+            items.add(new ContextMenuPopup.Item("REMOVE", () -> {
+                deleteSelectionWithUndo();
+                selection.clear();
+                simulationEngine.markWorldChanged();
+                requestRender();
+            }));
+        }
+
+        items.add(new ContextMenuPopup.Item("ROTATE CW",
+                () -> applyTransform(hasSel, hasClip, TransformKind.ROTATE_CW, MainState::rotateCw)));
+        items.add(new ContextMenuPopup.Item("ROTATE CCW",
+                () -> applyTransform(hasSel, hasClip, TransformKind.ROTATE_CCW, MainState::rotateCcw)));
+        items.add(new ContextMenuPopup.Item("FLIP H",
+                () -> applyTransform(hasSel, hasClip, TransformKind.FLIP_H, MainState::flipH)));
+        items.add(new ContextMenuPopup.Item("FLIP V",
+                () -> applyTransform(hasSel, hasClip, TransformKind.FLIP_V, MainState::flipV)));
+
+        ContextMenuPopup.show(owner, screenX, screenY, items);
+    }
+
+
+    private void applyTransform(boolean hasSel, boolean hasClip,
+                                TransformKind kind,
+                                java.util.function.UnaryOperator<Direction> dirOp) {
+        if (hasClip) transformClipboard(dirOp, kind);
+        else if (hasSel) transformSelection(dirOp, kind);
+        requestRender();
+    }
+
     private boolean canPlaySound() {
         long now = System.nanoTime();
         if (now - lastSoundNanos < MIN_SOUND_INTERVAL_NANOS) {
@@ -1377,7 +1887,6 @@ public class MainState implements State {
         lastSoundNanos = now;
         return true;
     }
-
 
     @Override
     public void handleKeyReleased(KeyEvent event) {
@@ -1425,10 +1934,11 @@ public class MainState implements State {
 
         if (event.getButton() == MouseButton.SECONDARY) {
             if (!overPalette) {
-                panning = true;
+                rmbCandidate = true;
+                rmbStartX = event.getSceneX();
+                rmbStartY = event.getSceneY();
                 lastMouseX = event.getSceneX();
                 lastMouseY = event.getSceneY();
-                renderer.getCanvas().setCursor(javafx.scene.Cursor.CLOSED_HAND);
             }
         } else if (event.getButton() == MouseButton.PRIMARY) {
             if (!overPalette && !selecting && !deleteMode) {
@@ -1447,6 +1957,10 @@ public class MainState implements State {
     @Override
     public void handleMouseReleased(MouseEvent event) {
         if (event.getButton() == MouseButton.SECONDARY) {
+            if (rmbCandidate) {
+                rmbCandidate = false;
+                showEditorContextMenu(event.getScreenX(), event.getScreenY());
+            }
             panning = false;
             renderer.getCanvas().setCursor(javafx.scene.Cursor.DEFAULT);
         }
@@ -1462,6 +1976,18 @@ public class MainState implements State {
         lastSceneMouseY = event.getSceneY();
 
         boolean overPalette = isMouseOverPalette(event.getSceneX(), event.getSceneY());
+
+        if (event.getButton() == MouseButton.SECONDARY && rmbCandidate && !overPalette) {
+            double dx = event.getSceneX() - rmbStartX;
+            double dy = event.getSceneY() - rmbStartY;
+            if (Math.hypot(dx, dy) > 4.0) {
+                panning = true;
+                rmbCandidate = false;
+                renderer.getCanvas().setCursor(javafx.scene.Cursor.CLOSED_HAND);
+            }
+        }
+
+        if (panning && !overPalette) { /* как раньше */ }
 
         if (panning && !overPalette) {
             double dx = event.getSceneX() - lastMouseX;

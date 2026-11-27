@@ -1,15 +1,20 @@
 package com.app.states;
 
-import com.app.Config;
+import com.app.audio.AudioManager;
 import com.app.core.MapManager;
 import com.app.core.World;
 import com.app.graphics.SpriteManager;
 import com.app.graphics.ColorConfig;
+import com.app.ui.ContextMenuPopup;
 import com.app.ui.HelpDialog;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
@@ -18,9 +23,13 @@ import javafx.scene.text.Font;
 import javafx.scene.text.FontPosture;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+
 import com.app.graphics.MenuBackgroundRenderer;
 import javafx.scene.canvas.Canvas;
 
@@ -33,6 +42,8 @@ public class MenuState implements State {
 
     private ColorConfig colors;
     private String backgroundColor;
+
+    private boolean contextMenuOpen = false;
 
     public MenuState() {
         this.colors = SpriteManager.getInstance().getColors();
@@ -71,12 +82,10 @@ public class MenuState implements State {
         settingsBtn.getStyleClass().add("button");
         settingsBtn.setOnAction(e -> nextState = new SettingsState());
 
-
         VBox bottomButtons = new VBox(8);
         bottomButtons.setAlignment(Pos.CENTER);
         bottomButtons.getChildren().addAll(newMapBtn, texpacksBtn, helpBtn, settingsBtn);
 
-        // <<< УМЕНЬШЕНО: 12 → 8 (расстояние между карточками)
         mapsContainer = new VBox(8);
         mapsContainer.setAlignment(Pos.TOP_CENTER);
 
@@ -85,8 +94,6 @@ public class MenuState implements State {
         scrollPane.setFitToWidth(true);
         scrollPane.setPrefWidth(700);
         scrollPane.setPrefHeight(850);
-        // <<< НОВОЕ: список карт растягивается по вертикали, забирая всё
-        //     свободное место у centerPanel, а кнопки прижимаются вниз
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
 
         centerPanel.getChildren().addAll(
@@ -135,21 +142,24 @@ public class MenuState implements State {
         HBox header = new HBox(10);
         header.setAlignment(Pos.CENTER_LEFT);
 
-        Text nameLabel = new Text(mapName);
-        nameLabel.setFill(Color.web(colors.getGrid()));
-        nameLabel.setFont(Font.font("Monospaced", FontWeight.BOLD, 22));
-        HBox.setHgrow(nameLabel, Priority.ALWAYS);
-        nameLabel.setWrappingWidth(480);
+        // === Плашка имени на всю ширину ===
+        StackPane nameBox = new StackPane();
+        nameBox.setPadding(new Insets(3, 10, 3, 10));
+        nameBox.setStyle(mapNameBoxStyle(false, false));
+        nameBox.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(nameBox, Priority.ALWAYS);
+        nameBox.setMaxWidth(Double.MAX_VALUE);
 
-        HBox buttonsBox = new HBox(6);
-        buttonsBox.setAlignment(Pos.CENTER_RIGHT);
+        Label nameLabel = new Label(mapName);
+        nameLabel.setStyle(
+                "-fx-font-family: 'Monospaced';" +
+                        "-fx-font-size: 22px;" +
+                        "-fx-font-weight: bold;" +
+                        "-fx-text-fill: " + colors.getGrid() + ";"
+        );
+        nameBox.getChildren().add(nameLabel);
 
-        Button playBtn = makeIconButton("▶", () -> loadMap(mapName));
-        Button renameBtn = makeIconButton("✎", () -> renameMap(mapName));
-        Button deleteBtn = makeIconButton("🗑", () -> deleteMap(mapName));
-
-        buttonsBox.getChildren().addAll(playBtn, renameBtn, deleteBtn);
-        header.getChildren().addAll(nameLabel, buttonsBox);
+        header.getChildren().add(nameBox);
 
         String dateStr = (stats != null) ? stats.lastModifiedPretty : "—";
         Text dateLabel = smallItalicText("🕒 " + dateStr);
@@ -160,29 +170,152 @@ public class MenuState implements State {
         sep.setStyle("-fx-background-color: " + colors.getGrid() + ";");
 
         VBox statsBox = new VBox(3);
-
         if (stats != null) {
-            String gatesLine = "🔣 Logic gates: " + stats.logicGates
-                    + "   ≈   " + stats.approxTransistors + " transistors";
-            statsBox.getChildren().add(smallItalicText(gatesLine));
-
-            String arrowsLine = "➡ Arrows: " + stats.arrows
-                    + "    📌 Pegs: " + stats.pegs;
-            statsBox.getChildren().add(smallItalicText(arrowsLine));
-
-            String textLine = "📝 Text blocks: " + stats.texts
-                    + "    🧩 Total blocks: " + stats.totalBlocks;
-            statsBox.getChildren().add(smallItalicText(textLine));
+            statsBox.getChildren().add(smallItalicText(
+                    "🔣 Logic gates: " + stats.logicGates + "   ≈   " + stats.approxTransistors + " transistors"));
+            statsBox.getChildren().add(smallItalicText(
+                    "➡ Arrows: " + stats.arrows + "    📌 Pegs: " + stats.pegs));
+            statsBox.getChildren().add(smallItalicText(
+                    "📝 Text blocks: " + stats.texts + "    🧩 Total blocks: " + stats.totalBlocks));
         } else {
             statsBox.getChildren().add(smallItalicText("📊 Stats unavailable"));
         }
 
         card.getChildren().addAll(header, dateLabel, sep, statsBox);
 
-        card.setOnMouseEntered(e -> card.setStyle(cardStyle(true)));
-        card.setOnMouseExited(e -> card.setStyle(cardStyle(false)));
+        card.setOnMouseEntered(e -> {
+            if (contextMenuOpen) return;
+            card.setStyle(cardStyle(true));
+        });
+        card.setOnMouseExited(e -> {
+            if (contextMenuOpen) { card.setStyle(cardStyle(false)); return; }
+            card.setStyle(cardStyle(false));
+        });
+
+        // === Двойной клик — открыть карту ===
+        card.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2 && e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
+                loadMap(mapName);
+                e.consume();
+            }
+        });
+
+        // === ПКМ — контекстное меню ===
+        card.setOnContextMenuRequested(e -> {
+            Stage owner = null;
+            if (root.getScene() != null && root.getScene().getWindow() instanceof Stage) {
+                owner = (Stage) root.getScene().getWindow();
+            }
+            if (owner == null) return;
+
+            final Stage finalOwner = owner;
+            java.util.List<ContextMenuPopup.Item> items = java.util.List.of(
+                    new ContextMenuPopup.Item("PLAY", () -> loadMap(mapName)),
+                    new ContextMenuPopup.Item("RENAME", () -> {
+                        nameBox.setStyle(mapNameBoxStyle(false, true));
+                        beginInlineRename(nameLabel, mapName, nameBox);
+                    }),
+                    new ContextMenuPopup.Item("DELETE", () -> {
+                        if (confirmDeleteMap(mapName)) deleteMap(mapName);
+                    })
+            );
+
+            ContextMenuPopup.show(owner, e.getScreenX(), e.getScreenY(), items,
+                    blocked -> {
+                        contextMenuOpen = blocked;
+                        if (blocked) {
+                            // снять hover у всех карточек
+                            for (javafx.scene.Node n : mapsContainer.getChildren()) {
+                                if (n instanceof VBox) n.setStyle(cardStyle(false));
+                            }
+                        }
+                    });
+            e.consume();
+        });
 
         return card;
+    }
+
+    private boolean isInside(javafx.scene.Node parent, Object target) {
+        if (!(target instanceof javafx.scene.Node)) return false;
+        javafx.scene.Node n = (javafx.scene.Node) target;
+        while (n != null) {
+            if (n == parent) return true;
+            n = n.getParent();
+        }
+        return false;
+    }
+
+    private void beginInlineRename(Label nameLabel, String oldName, StackPane nameBox) {
+        TextField field = new TextField(oldName);
+        field.setStyle(
+                "-fx-font-family: 'Monospaced';" +
+                        "-fx-font-size: 22px;" +
+                        "-fx-font-weight: bold;" +
+                        "-fx-background-color: " + colors.getBackground() + ";" +
+                        "-fx-text-fill: " + colors.getText() + ";" +
+                        "-fx-control-inner-background: " + colors.getBackground() + ";" +
+                        "-fx-border-width: 0;" +
+                        "-fx-padding: 0;"
+        );
+
+        nameBox.getChildren().setAll(field);
+        field.requestFocus();
+        field.selectAll();
+
+        Runnable commit = () -> {
+            String newName = field.getText().trim();
+            if (!newName.isEmpty() && !newName.equals(oldName)
+                    && !MapManager.mapExists(newName)) {
+                if (MapManager.renameMap(oldName, newName)) {
+                    nameLabel.setText(newName);
+                }
+            }
+            nameBox.getChildren().setAll(nameLabel);
+            nameBox.setStyle(mapNameBoxStyle(false, false));
+        };
+
+        field.setOnAction(ev -> commit.run());
+        field.focusedProperty().addListener((obs, was, is) -> { if (was && !is) commit.run(); });
+        field.setOnKeyPressed(ev -> {
+            if (ev.getCode() == KeyCode.ESCAPE) {
+                nameBox.getChildren().setAll(nameLabel);
+                nameBox.setStyle(mapNameBoxStyle(false, false));
+            }
+        });
+    }
+
+    private String mapNameBoxStyle(boolean hover, boolean active) {
+        String border;
+        if (active) border = colors.getSignalOn();
+        else if (hover) border = colors.getGrid();
+        else border = "transparent";
+
+        return "-fx-background-color: " + colors.getBackground() + ";" +
+                "-fx-border-color: " + border + ";" +
+                "-fx-border-width: 2;" +
+                "-fx-border-radius: 6;" +
+                "-fx-background-radius: 6;";
+    }
+
+    private boolean confirmDeleteMap(String name) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initModality(Modality.APPLICATION_MODAL);
+        if (root.getScene() != null && root.getScene().getWindow() instanceof Stage) {
+            alert.initOwner((Stage) root.getScene().getWindow());
+        }
+        alert.setTitle("Delete map");
+        alert.setHeaderText("Delete \"" + name + "\"?");
+        alert.setContentText("This action cannot be undone.");
+
+        alert.getDialogPane().setStyle("-fx-background-color: " + colors.getBackground() + ";");
+        if (alert.getDialogPane().lookup(".header-panel") != null) {
+            alert.getDialogPane().lookup(".header-panel")
+                    .setStyle("-fx-background-color: " + colors.getArrow() + ";");
+        }
+        AudioManager.installButtonSound(alert.getDialogPane().getScene());
+
+        return alert.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
     }
 
     private String cardStyle(boolean hover) {
@@ -255,25 +388,6 @@ public class MenuState implements State {
 
     private void loadMap(String name) {
         nextState = new MainState(name);
-    }
-
-    private void renameMap(String oldName) {
-        TextInputDialog dialog = new TextInputDialog(oldName);
-        dialog.setTitle("Rename Map");
-        dialog.setHeaderText("Enter new name");
-        dialog.setContentText("Map name:");
-        dialog.getEditor().setStyle("-fx-font-size: 14px;");
-
-        Optional<String> result = dialog.showAndWait();
-        result.ifPresent(newName -> {
-            if (!newName.trim().isEmpty() && !newName.equals(oldName)) {
-                if (MapManager.renameMap(oldName, newName)) {
-                    refreshMapsList();
-                } else {
-                    showError("Failed to rename map");
-                }
-            }
-        });
     }
 
     private void deleteMap(String name) {

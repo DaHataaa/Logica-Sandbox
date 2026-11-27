@@ -2,6 +2,7 @@ package com.app.core;
 
 import com.app.Config;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -95,6 +96,8 @@ public class SimulationEngine {
     private volatile long intervalNanos = 16_666_667L;
     private volatile boolean configDirty = false;
 
+    private final List<Runnable> tickListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     public SimulationEngine(World world) {
         this.world = world;
         this.size = world.getSize();
@@ -125,6 +128,18 @@ public class SimulationEngine {
         updateIntervalFromSpeed();
         startSimThread();
         startTpsCounter();
+    }
+
+    // Поля (в начало класса)
+
+
+    // Методы
+    public void addTickListener(Runnable listener) {
+        if (listener != null) tickListeners.add(listener);
+    }
+
+    public void removeTickListener(Runnable listener) {
+        if (listener != null) tickListeners.remove(listener);
     }
 
     private int idx(int layer, int x, int y) {
@@ -336,6 +351,11 @@ public class SimulationEngine {
             lastPhase1Nanos = tPhase1;
             lastPhase2Nanos = tPhase2;
             lastPropagateNanos = propAcc;
+        }
+
+        // Уведомляем слушателей о завершении тика
+        for (Runnable l : tickListeners) {
+            try { l.run(); } catch (Exception ignored) {}
         }
     }
 

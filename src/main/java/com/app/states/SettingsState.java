@@ -234,9 +234,24 @@ public class SettingsState implements State {
                 },
                 String::valueOf
         ));
+        rows.getChildren().add(separator());
+
+        rows.getChildren().add(intRow(
+                "Script run delay (sec)",
+                String.valueOf(config.getScriptRunDelay()),
+                false, false,
+                v -> {
+                    if (v < 0) v = 0;
+                    if (v > 3600) v = 3600;
+                    config.setScriptRunDelay(v);
+                },
+                String::valueOf
+        ));
 
         return group("🔧 MISC", rows);
     }
+
+
 
     private VBox group(String titleText, VBox rowsContainer) {
         VBox group = new VBox(8);

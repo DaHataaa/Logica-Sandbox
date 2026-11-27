@@ -22,7 +22,6 @@ public class Config {
             .setPrettyPrinting()
             .create();
 
-    // Настройки окна
     @SerializedName("window_width")
     private int windowWidth = 1600;
 
@@ -32,14 +31,12 @@ public class Config {
     @SerializedName("fullscreen")
     private boolean fullscreen = false;
 
-    // Настройки симуляции
     @SerializedName("simulation_speed")
     private int simulationSpeed = 60;
 
     @SerializedName("available_speeds")
     private int[] availableSpeeds = {0, 1, 2, 4, 8, 15, 30, 60, 120, 240, 480};
 
-    // Настройки редактора
     @SerializedName("undo_depth")
     private int undoDepth = 50;
 
@@ -52,18 +49,18 @@ public class Config {
     @SerializedName("default_cell_size")
     private int defaultCellSize = 32;
 
-    // Настройки мира
+    @SerializedName("script_run_delay")
+    private int scriptRunDelay = 2;
+
     @SerializedName("world_size")
     private int worldSize = 256;
 
     @SerializedName("layers")
     private int layers = 5;
 
-    // Текущий текстурпак
     @SerializedName("current_texturepack")
     private String currentTexturepack = "Classic";
 
-    // ===== AUDIO =====
     @SerializedName("master_volume")
     private int masterVolume = 100;
 
@@ -73,7 +70,6 @@ public class Config {
     @SerializedName("editor_volume")
     private int editorVolume = 100;
 
-    // === DEBUG ===
     @SerializedName("debug_overlay")
     private boolean debugOverlay = false;
 
@@ -148,16 +144,15 @@ public class Config {
                     this.cellSizeMin = loaded.cellSizeMin;
                     this.cellSizeMax = loaded.cellSizeMax;
                     this.defaultCellSize = loaded.defaultCellSize;
+                    this.scriptRunDelay = (loaded.scriptRunDelay < 0) ? 0 : loaded.scriptRunDelay;
                     this.worldSize = loaded.worldSize;
                     this.layers = loaded.layers;
                     this.currentTexturepack = loaded.currentTexturepack;
 
-                    // AUDIO
                     this.masterVolume = loaded.masterVolume;
                     this.uiClickVolume = loaded.uiClickVolume;
                     this.editorVolume = (loaded.editorVolume <= 0) ? 100 : loaded.editorVolume;
 
-                    // === DEBUG ===
                     this.debugOverlay = loaded.debugOverlay;
                     this.debugSampleEvery = (loaded.debugSampleEvery < 1) ? 10 : loaded.debugSampleEvery;
                     this.debugAvgWindow   = (loaded.debugAvgWindow   < 1) ? 100 : loaded.debugAvgWindow;
@@ -183,7 +178,6 @@ public class Config {
         }
     }
 
-    // Getters
     public int getWindowWidth() { return windowWidth; }
     public int getWindowHeight() { return windowHeight; }
     public boolean isFullscreen() { return fullscreen; }
@@ -193,6 +187,7 @@ public class Config {
     public int getCellSizeMin() { return cellSizeMin; }
     public int getCellSizeMax() { return cellSizeMax; }
     public int getDefaultCellSize() { return defaultCellSize; }
+    public int getScriptRunDelay() { return scriptRunDelay; }
     public int getWorldSize() { return worldSize; }
     public int getLayers() { return layers; }
     public String getCurrentTexturepack() { return currentTexturepack; }
@@ -201,12 +196,10 @@ public class Config {
     public int getUiClickVolume() { return uiClickVolume; }
     public int getEditorVolume() { return editorVolume; }
 
-    // === DEBUG ===
     public boolean isDebugOverlay() { return debugOverlay; }
     public int getDebugSampleEvery() { return debugSampleEvery; }
     public int getDebugAvgWindow() { return debugAvgWindow; }
 
-    // Setters
     public void setCurrentTexturepack(String currentTexturepack) { this.currentTexturepack = currentTexturepack; }
     public void setSimulationSpeed(int simulationSpeed) { this.simulationSpeed = simulationSpeed; }
     public void setWindowWidth(int windowWidth) { this.windowWidth = windowWidth; }
@@ -218,11 +211,16 @@ public class Config {
     public void setCellSizeMax(int cellSizeMax) { this.cellSizeMax = cellSizeMax; }
     public void setLayers(int layers) { this.layers = layers; }
 
+    public void setScriptRunDelay(int v) {
+        if (v < 0) v = 0;
+        if (v > 3600) v = 3600;
+        this.scriptRunDelay = v;
+    }
+
     public void setMasterVolume(int masterVolume) { this.masterVolume = masterVolume; }
     public void setUiClickVolume(int uiClickVolume) { this.uiClickVolume = uiClickVolume; }
     public void setEditorVolume(int editorVolume) { this.editorVolume = editorVolume; }
 
-    // === DEBUG ===
     public void setDebugOverlay(boolean debugOverlay) { this.debugOverlay = debugOverlay; }
     public void setDebugSampleEvery(int v) { if (v < 1) v = 1; this.debugSampleEvery = v; }
     public void setDebugAvgWindow(int v)   { if (v < 1) v = 1; this.debugAvgWindow = v; }
