@@ -13,7 +13,7 @@
   "cell_size_min": 2,
   "cell_size_max": 100,
   "default_cell_size": 32,
-  "script_run_delay": 3,
+  "script_run_delay": 2,
   "world_size": 512,
   "layers": 5,
   "current_texturepack": "Classic",

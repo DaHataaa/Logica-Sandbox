@@ -475,10 +475,12 @@ public class SimulationEngine {
     }
 
     public void setOnTickComplete(Runnable callback) { this.onTickComplete = callback; }
-    public void start() { isPaused.set(false); isRunning.set(true); signalConfigChange(); }
-    public void pause() { isPaused.set(true); tpsSmoothed = 0; actualTps = 0; }
+    public void start() { isPaused.set(false); isRunning.set(true); updateIntervalFromSpeed(); signalConfigChange(); }
+    public void pause() { isPaused.set(true); tpsSmoothed = 0; actualTps = 0; signalConfigChange(); }
     public void stop() {
         isRunning.set(false); isPaused.set(false);
+        // Уведомляем поток симуляции, чтобы он пересчитал интервал и вышел из режима сна
+        signalConfigChange();
         synchronized (loopLock) {
             simThreadRunning = false;
             if (simThread != null) { simThread.interrupt(); simThread = null; }
@@ -514,6 +516,12 @@ public class SimulationEngine {
     }
 
     private void tickOnce() {
+        // Если мир менялся, а симуляция стояла на паузе — пересобираем состояние
+        // ДО тика. Иначе скрипт (PLACE + SLEEP_TICKS), запущенный на паузе,
+        // ждал бы тиков, которые никогда не придут (dirtyCount == 0).
+        if (activeCellsDirty) {
+            rebuild();
+        }
         tickCore();
         if (onTickComplete != null) javafx.application.Platform.runLater(onTickComplete);
     }

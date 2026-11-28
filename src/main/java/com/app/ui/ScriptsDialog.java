@@ -6,6 +6,7 @@ import com.app.core.Script;
 import com.app.core.ScriptManager;
 import com.app.graphics.ColorConfig;
 import com.app.graphics.SpriteManager;
+import com.app.states.MainState;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -32,6 +33,8 @@ public class ScriptsDialog {
         final boolean[] contextMenuOpen = {false};
 
         Stage dialog = new Stage();
+
+
         dialog.initModality(Modality.APPLICATION_MODAL);
         if (owner != null) dialog.initOwner(owner);
         dialog.setTitle("Scripts");
@@ -199,8 +202,20 @@ public class ScriptsDialog {
         dialog.setScene(scene);
         AudioManager.installButtonSound(scene);
 
+
+        // ПРАВИЛЬНО: обращаемся к экземпляру dialog, а не к классу Stage
+        dialog.setOnCloseRequest(ev -> {
+            MainState.isScriptsDialogOpen = false; // Сбрасываем флаг в MainState
+            closing[0] = true;
+            if (locked[0] != null) {
+                locked[0].setCode(codeArea.getText());
+                ScriptManager.save(locked[0]);
+            }
+        });
+
         dialog.setOnHidden(ev -> {
             if (closing[0]) return;
+            MainState.isScriptsDialogOpen = false; // Дублируем сброс для надежности
             if (locked[0] != null) {
                 locked[0].setCode(codeArea.getText());
                 ScriptManager.save(locked[0]);
@@ -275,7 +290,7 @@ public class ScriptsDialog {
                     new ContextMenuPopup.Item("RENAME",
                             () -> {
                                 nameBox.setStyle(nameBoxStyle(false, true, colors));
-                                beginInlineRename(name, script, nameBox, colors);
+                                beginInlineRename(name, script, nameBox, colors, locked, codeArea);
                             },
                             true),
                     new ContextMenuPopup.Item("DELETE",
@@ -300,7 +315,8 @@ public class ScriptsDialog {
         return row;
     }
 
-    private static void beginInlineRename(Label name, Script script, StackPane nameBox, ColorConfig colors) {
+    private static void beginInlineRename(Label name, Script script, StackPane nameBox, ColorConfig colors,
+                                          Script[] locked, TextArea codeArea) {
         TextField field = new TextField(script.getName());
         field.setStyle(
                 "-fx-font-family: 'Monospaced';" +
@@ -320,6 +336,11 @@ public class ScriptsDialog {
             if (!nn.isEmpty() && nn.length() <= MAX_NAME_LEN
                     && !nn.equals(script.getName())
                     && !ScriptManager.exists(nn)) {
+                // Если переименовываем активный скрипт — сначала сохраняем текущий код,
+                // иначе изменения в редакторе потеряются (rename переносит файл на диске)
+                if (locked[0] == script) {
+                    script.setCode(codeArea.getText());
+                }
                 String old = script.getName();
                 if (ScriptManager.rename(old, nn)) {
                     script.setName(nn);
@@ -344,22 +365,16 @@ public class ScriptsDialog {
     }
 
     private static void hoverEnter(Script script, Script[] locked, Script[] hovered,
-                                   TextArea codeArea, VBox listBox, ColorConfig colors) {
+                                    TextArea codeArea, VBox listBox, ColorConfig colors) {
         hovered[0] = script;
-        if (locked[0] == null) {
-            codeArea.setText(script.getCode());
-        }
+        // Убираем превью при наведении - codeArea показывает только locked скрипт
         applyStyles(listBox, locked[0], hovered[0], colors);
     }
 
     private static void hoverExit(Script[] locked, Script[] hovered,
                                   TextArea codeArea, VBox listBox, ColorConfig colors) {
         hovered[0] = null;
-        if (locked[0] != null) {
-            codeArea.setText(locked[0].getCode());
-        } else {
-            codeArea.clear();
-        }
+        // Убираем превью при наведении - codeArea показывает только locked скрипт
         applyStyles(listBox, locked[0], null, colors);
     }
 

@@ -28,7 +28,6 @@ import java.util.Optional;
 public class MainState implements State {
     private BorderPane root;
     private State nextState;
-
     private World world;
     private Camera camera;
     private CameraFollower cameraFollower;
@@ -37,7 +36,6 @@ public class MainState implements State {
     private SimulationEngine simulationEngine;
     private Selection selection;
     private UndoManager undoManager;
-
     private String currentMapName;
 
     private boolean panning = false;
@@ -49,14 +47,11 @@ public class MainState implements State {
     private boolean selecting = false;
     private int selectionStartX = 0;
     private int selectionStartY = 0;
-
     private boolean previewMode = false;
 
     private String powerColor;
     private String gridColor;
-
     private boolean deleteMode = false;
-
     private AnimationTimer deleteTimer;
     private long lastDeleteTickNanos = 0;
     private static final long DELETE_INTERVAL_NANOS = 10_000_000L;
@@ -73,11 +68,8 @@ public class MainState implements State {
     private int keyboardCursorY = 0;
 
     private boolean fHandledOnPress = false;
-
     private boolean needsRender = true;
-
     private long lastFrameNanos = 0;
-
     private boolean filterInstalled = false;
 
     // === DEBUG ===
@@ -99,6 +91,13 @@ public class MainState implements State {
 
     private ScriptInterpreter currentInterpreter;
 
+    // === Countdown перед запуском скрипта ===
+    private boolean scriptCountdownActive = false;
+    private long scriptCountdownEndNanos = 0L;
+    private String scriptCountdownCode = null;
+    private javafx.animation.AnimationTimer countdownTimer;
+
+    public static boolean isScriptsDialogOpen = false;
 
     public MainState() {
         this(null);
@@ -106,7 +105,6 @@ public class MainState implements State {
 
     public MainState(String mapName) {
         Config config = Config.getInstance();
-
         this.currentMapName = mapName;
         this.world = new World();
 
@@ -145,18 +143,13 @@ public class MainState implements State {
 
         palette.setOnSelectionChange(this::onBlockSelected);
         palette.setOnSpeedChange(this::onSpeedChange);
-
         palette.setCurrentSpeed(simulationEngine.getSpeed());
         palette.updateSimulationStatus(simulationEngine.isRunning());
 
         renderer.getCanvas().setFocusTraversable(true);
         renderer.getCanvas().setOnMousePressed(e -> renderer.getCanvas().requestFocus());
 
-        root.sceneProperty().addListener((obs, oldScene, newScene) -> {
-            if (newScene != null) {
-                installKeyboardFilter(newScene);
-            }
-        });
+        // УБРАЛИ слушатель sceneProperty, чтобы не вешать фильтры на общий Scene
 
         javafx.application.Platform.runLater(() -> {
             if (root.getScene() != null) {
@@ -175,15 +168,19 @@ public class MainState implements State {
 
         simulationEngine.start();
         initDeleteTimer();
+
+        // Вешаем фильтр на root (он уникален для каждого MainState), а не на Scene
+        installKeyboardFilter();
     }
 
     private void requestRender() { needsRender = true; }
 
-    private void installKeyboardFilter(Scene scene) {
+    // ИЗМЕНЕНО: теперь фильтр вешается на root, а не на Scene
+    private void installKeyboardFilter() {
         if (filterInstalled) return;
         filterInstalled = true;
 
-        scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+        root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getTarget() instanceof TextInputControl) return;
 
             KeyCode code = event.getCode();
@@ -205,6 +202,7 @@ public class MainState implements State {
                     || code == KeyCode.MINUS || code == KeyCode.SUBTRACT) {
                 boolean zoomIn = code == KeyCode.EQUALS || code == KeyCode.ADD;
                 double zx, zy;
+
                 if (keyboardCursorActive) {
                     zx = camera.worldToScreenX((keyboardCursorX + 0.5) * camera.getBaseCellSize());
                     zy = camera.worldToScreenY((keyboardCursorY + 0.5) * camera.getBaseCellSize());
@@ -264,10 +262,10 @@ public class MainState implements State {
             }
         });
 
-        scene.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
+        root.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
             if (event.getTarget() instanceof TextInputControl) return;
-            KeyCode code = event.getCode();
 
+            KeyCode code = event.getCode();
             if (code == KeyCode.F) {
                 fHeld = false;
                 event.consume();
@@ -283,34 +281,49 @@ public class MainState implements State {
     }
 
     private void openScriptsDialog() {
+        if (isScriptsDialogOpen) {
+            System.out.println("[SCRIPT] Dialog already open, ignoring F2");
+            return;
+        }
+        isScriptsDialogOpen = true;
+
         Stage owner = null;
         if (root.getScene() != null && root.getScene().getWindow() instanceof Stage) {
             owner = (Stage) root.getScene().getWindow();
         }
+
         ScriptsDialog.show(owner, (code, delaySeconds) -> {
-            if (delaySeconds <= 0) {
-                executeScript(code);
-            } else {
-                javafx.animation.PauseTransition pt =
-                        new javafx.animation.PauseTransition(javafx.util.Duration.seconds(delaySeconds));
-                pt.setOnFinished(ev -> executeScript(code));
-                pt.play();
-            }
-            javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
+            isScriptsDialogOpen = false;
+            startScriptWithCountdown(code, delaySeconds);
         });
     }
 
+    /** Устанавливает клавиатурный курсор в клетку под текущей позицией мыши. */
+    private void beginKeyboardCursorAtMouse() {
+        int[] cell = getCellUnderSceneCoords(lastSceneMouseX, lastSceneMouseY);
+        keyboardCursorX = Math.max(0, Math.min(world.getSize() - 1, cell[0]));
+        keyboardCursorY = Math.max(0, Math.min(world.getSize() - 1, cell[1]));
+        keyboardCursorActive = true;
+        requestRender();
+    }
 
-
-    /** Выполнение скрипта. */
     private void executeScript(String code) {
-        // Если предыдущий скрипт ещё крутится — останавливаем
         if (currentInterpreter != null) {
             currentInterpreter.stop();
             System.out.println("[SCRIPT] Previous script interrupted.");
         }
 
         currentInterpreter = new ScriptInterpreter(code, this::handleScriptCommand, simulationEngine);
+
+        // Динамический GET — всегда актуальное значение под курсором
+        currentInterpreter.setGetProvider(() -> {
+            if (keyboardCursorActive && isValidCell(keyboardCursorX, keyboardCursorY)) {
+                int layer = world.getCurrentLayer();
+                int idx = world.getIdx(layer, keyboardCursorX, keyboardCursorY);
+                return worldTypeToScriptId(world.blockTypes[idx]);
+            }
+            return -1;
+        });
 
         currentInterpreter.setOnComplete(() -> {
             System.out.println("[SCRIPT] Execution finished.");
@@ -322,134 +335,203 @@ public class MainState implements State {
         currentInterpreter.start();
     }
 
+    private int worldTypeToScriptId(int worldType) {
+        switch (worldType) {
+            case World.TYPE_EMPTY:  return 0;
+            case World.TYPE_ARROW:  return 1;
+            case World.TYPE_GETTER: return 2;
+            case World.TYPE_BRIDGE: return 3;
+            case World.TYPE_PEG:    return 4;
+            case World.TYPE_POWER:  return 5;
+            case World.TYPE_NOT:    return 6;
+            case World.TYPE_OR:     return 7;
+            case World.TYPE_AND:    return 8;
+            case World.TYPE_XOR:    return 9;
+            case World.TYPE_TEXT:   return 10;
+            default:                return -1;
+        }
+    }
+
     /** Обработчик "мировых" команд скрипта. */
     private void handleScriptCommand(String command, String[] args) {
         int layer = world.getCurrentLayer();
 
+        // Обновляем lastGetValue перед выполнением любой команды,
+        // чтобы GET всегда актуален
+        if (currentInterpreter != null) {
+            if (isValidCell(keyboardCursorX, keyboardCursorY)) {
+                int idx = world.getIdx(layer, keyboardCursorX, keyboardCursorY);
+            }
+        }
+
         switch (command) {
-            case "PLACE": {
-                // PLACE <block> <x> <y>
-                if (args.length < 3) {
-                    System.err.println("[SCRIPT] PLACE requires: <block> <x> <y>");
-                    return;
+            case "RIGHT":
+            case "LEFT":
+            case "UP":
+            case "DOWN": {
+                int steps = 1;
+                if (args.length > 0) {
+                    try { steps = Integer.parseInt(args[0]); } catch (Exception ignored) {}
                 }
-                String blockName = args[0].toLowerCase();
-                int x, y;
-                try {
-                    x = Integer.parseInt(args[1]);
-                    y = Integer.parseInt(args[2]);
-                } catch (NumberFormatException e) {
-                    System.err.println("[SCRIPT] Invalid coords in: PLACE " + String.join(" ", args));
-                    return;
+                ensureKeyboardCursor();
+                switch (command) {
+                    case "RIGHT": keyboardCursorX += steps; break;
+                    case "LEFT":  keyboardCursorX -= steps; break;
+                    case "UP":    keyboardCursorY -= steps; break;
+                    case "DOWN":  keyboardCursorY += steps; break;
                 }
-                if (!isValidCell(x, y)) {
-                    System.err.println("[SCRIPT] Cell out of bounds: " + x + "," + y);
-                    return;
+                // Clamp coordinates
+                keyboardCursorX = Math.max(0, Math.min(world.getSize() - 1, keyboardCursorX));
+                keyboardCursorY = Math.max(0, Math.min(world.getSize() - 1, keyboardCursorY));
+                requestRender();
+                break;
+            }
+            case "SET": {
+                if (args.length < 1) return;
+                int blockId;
+                try { blockId = Integer.parseInt(args[0]); } catch (Exception e) { return; }
+
+                String blockName = "";
+                // Твоя новая нумерация
+                switch (blockId) {
+                    case 0: blockName = "0"; break;
+                    case 1: blockName = "arrow"; break;
+                    case 2: blockName = "getter"; break;
+                    case 3: blockName = "bridge"; break;
+                    case 4: blockName = "peg"; break;
+                    case 5: blockName = "power"; break;
+                    case 6: blockName = "not"; break;
+                    case 7: blockName = "or"; break;
+                    case 8: blockName = "and"; break;
+                    case 9: blockName = "xor"; break;
+                    case 10: blockName = "text"; break;
+                    default: return;
                 }
-                // Если блок имеет направление, а его не указали — берём текущее из палитры
-                String blockStr = blockName;
-                BlockType type = findBlockType(blockName);
-                if (type != null && type.hasDirection()) {
-                    Direction dir = palette.getCurrentDirection();
-                    blockStr = blockName + "_f" + dir.getCode();
-                }
-                if (changeCellWithUndo(layer, x, y, blockStr, "script-place")) {
-                    simulationEngine.markWorldChanged();
-                    requestRender();
+
+                if (blockName.equals("0")) {
+                    removeBlockAtCell(keyboardCursorX, keyboardCursorY);
+                } else {
+                    BlockType type = findBlockType(blockName);
+                    String blockStr = blockName;
+                    if (type != null && type.hasDirection()) {
+                        Direction dir = palette.getCurrentDirection();
+                        blockStr += "_f" + dir.getCode();
+                    }
+                    if (changeCellWithUndo(layer, keyboardCursorX, keyboardCursorY, blockStr, "script-set")) {
+                        simulationEngine.markWorldChanged();
+                        requestRender();
+                    }
                 }
                 break;
             }
-
-            case "PLACE_DIR": {
-                // PLACE_DIR <block> <x> <y> <u|d|l|r>
-                if (args.length < 4) {
-                    System.err.println("[SCRIPT] PLACE_DIR requires: <block> <x> <y> <dir>");
-                    return;
-                }
-                String blockName = args[0].toLowerCase();
-                int x, y;
-                try {
-                    x = Integer.parseInt(args[1]);
-                    y = Integer.parseInt(args[2]);
-                } catch (NumberFormatException e) {
-                    System.err.println("[SCRIPT] Invalid coords in: PLACE_DIR");
-                    return;
-                }
-                Direction dir = Direction.fromChar(args[3].charAt(0));
-                if (!isValidCell(x, y)) {
-                    System.err.println("[SCRIPT] Cell out of bounds: " + x + "," + y);
-                    return;
-                }
-                String blockStr = blockName + "_f" + dir.getCode();
-                if (changeCellWithUndo(layer, x, y, blockStr, "script-place")) {
-                    simulationEngine.markWorldChanged();
-                    requestRender();
-                }
-                break;
-            }
-
             case "REMOVE": {
-                // REMOVE <x> <y>
-                if (args.length < 2) {
-                    System.err.println("[SCRIPT] REMOVE requires: <x> <y>");
-                    return;
+                int savedX = keyboardCursorX;
+                int savedY = keyboardCursorY;
+                if (args.length == 0) {
+                    removeBlockAtCell(keyboardCursorX, keyboardCursorY);
+                } else if (args.length >= 2) {
+                    int w, h;
+                    try {
+                        w = Integer.parseInt(args[0]);
+                        h = Integer.parseInt(args[1]);
+                    } catch (Exception e) { return; }
+
+                    undoManager.beginStep("script-remove-area");
+                    // ИЗМЕНЕНО: идем ВНИЗ и ВПРАВО
+                    for (int dy = 0; dy < h; dy++) {
+                        for (int dx = 0; dx < w; dx++) {
+                            int cx = savedX + dx;
+                            int cy = savedY + dy;
+                            if (isValidCell(cx, cy)) {
+                                String old = world.getBlock(layer, cx, cy);
+                                if (old != null && !old.equals("0")) {
+                                    boolean os = world.getSignal(layer, cx, cy);
+                                    world.removeBlock(layer, cx, cy);
+                                    undoManager.recordChange(layer, cx, cy, old, "0", os, false);
+                                }
+                            }
+                        }
+                    }
+                    undoManager.commitStep();
+                    simulationEngine.markWorldChanged();
+                    requestRender();
                 }
-                int x, y;
-                try {
-                    x = Integer.parseInt(args[0]);
-                    y = Integer.parseInt(args[1]);
-                } catch (NumberFormatException e) {
-                    System.err.println("[SCRIPT] Invalid coords in: REMOVE");
-                    return;
+                // Возврат курсора
+                keyboardCursorX = savedX;
+                keyboardCursorY = savedY;
+                requestRender();
+                break;
+            }
+            case "COPY": {
+                if (args.length >= 2) {
+                    int savedX = keyboardCursorX;
+                    int savedY = keyboardCursorY;
+                    int w, h;
+                    try {
+                        w = Integer.parseInt(args[0]);
+                        h = Integer.parseInt(args[1]);
+                    } catch (Exception e) { return; }
+
+                    // ИЗМЕНЕНО: выделение идет ВНИЗ и ВПРАВО
+                    selection.startSelection(savedX, savedY, layer);
+                    selection.updateSelection(savedX + w + 1, savedY + h - 1);
+                    selection.finishSelection(world);
+                    selection.copyToClipboard();
+
+                    previewMode = true;
+                    keyboardCursorX = savedX;
+                    keyboardCursorY = savedY;
+                    requestRender();
                 }
-                if (!isValidCell(x, y)) return;
-                if (changeCellWithUndo(layer, x, y, "0", "script-remove")) {
+                break;
+            }
+            case "CUT": {
+                if (args.length >= 2) {
+                    int savedX = keyboardCursorX;
+                    int savedY = keyboardCursorY;
+                    int w, h;
+                    try {
+                        w = Integer.parseInt(args[0]);
+                        h = Integer.parseInt(args[1]);
+                    } catch (Exception e) { return; }
+
+                    // ИЗМЕНЕНО: выделение идет ВНИЗ и ВПРАВО
+                    selection.startSelection(savedX, savedY, layer);
+                    selection.updateSelection(savedX + w - 1, savedY + h - 1);
+                    selection.finishSelection(world);
+                    cutSelectionWithUndo();
+
+                    previewMode = true;
+                    simulationEngine.markWorldChanged();
+                    keyboardCursorX = savedX;
+                    keyboardCursorY = savedY;
+                    requestRender();
+                }
+                break;
+            }
+            case "PASTE": {
+                if (Selection.hasClipboard()) {
+                    pasteWithUndo(keyboardCursorX, keyboardCursorY);
                     simulationEngine.markWorldChanged();
                     requestRender();
                 }
                 break;
             }
-
-            case "SET_SPEED": {
-                // SET_SPEED <0..N>
-                if (args.length < 1) return;
-                try {
-                    int speed = Integer.parseInt(args[0]);
-                    palette.setCurrentSpeed(speed);
-                    onSpeedChange();
-                } catch (NumberFormatException ignored) {}
+            case "DESELECT": {
+                previewMode = false;
+                selection.clear();
+                Selection.resetClipboard();
+                requestRender();
                 break;
             }
-
-            case "PAUSE": {
-                if (simulationEngine.isRunning()) {
-                    simulationEngine.pause();
-                    palette.updateSimulationStatus(false);
-                }
+            case "GET": {
+                // Значение уже обновлено в начале метода
                 break;
             }
-
-            case "RESUME": {
-                if (!simulationEngine.isRunning()) {
-                    simulationEngine.start();
-                    palette.updateSimulationStatus(true);
-                }
+            case "OPENFILE": {
+                // Обработка файла происходит внутри ScriptInterpreter
                 break;
             }
-
-            case "LAYER": {
-                // LAYER <n>
-                if (args.length < 1) return;
-                try {
-                    int n = Integer.parseInt(args[0]);
-                    while (world.getCurrentLayer() < n) world.nextLayer();
-                    while (world.getCurrentLayer() > n) world.previousLayer();
-                    palette.updateLayer(world.getCurrentLayer());
-                    requestRender();
-                } catch (NumberFormatException ignored) {}
-                break;
-            }
-
             default:
                 System.err.println("[SCRIPT] Unknown command: " + command);
                 break;
@@ -474,7 +556,6 @@ public class MainState implements State {
 
         if (oldBlock == null) oldBlock = "0";
         if (newBlock == null || newBlock.isEmpty()) newBlock = "0";
-
         if (oldBlock.equals(newBlock)) return false;
 
         world.setBlock(layer, x, y, newBlock);
@@ -521,7 +602,6 @@ public class MainState implements State {
         int maxY = Math.max(selection.getStartY(), selection.getEndY());
 
         undoManager.beginStep("delete-selection");
-
         for (int y = minY; y <= maxY; y++) {
             for (int x = minX; x <= maxX; x++) {
                 if (!isValidCell(x, y)) continue;
@@ -533,13 +613,11 @@ public class MainState implements State {
                 undoManager.recordChange(layer, x, y, oldBlock, "0", oldSignal, false);
             }
         }
-
         undoManager.commitStep();
     }
 
     private void cutSelectionWithUndo() {
         selection.copyToClipboard();
-
         int layer = world.getCurrentLayer();
         int minX = Math.min(selection.getStartX(), selection.getEndX());
         int maxX = Math.max(selection.getStartX(), selection.getEndX());
@@ -547,7 +625,6 @@ public class MainState implements State {
         int maxY = Math.max(selection.getStartY(), selection.getEndY());
 
         undoManager.beginStep("cut");
-
         for (int y = minY; y <= maxY; y++) {
             for (int x = minX; x <= maxX; x++) {
                 if (!isValidCell(x, y)) continue;
@@ -559,13 +636,11 @@ public class MainState implements State {
                 undoManager.recordChange(layer, x, y, oldBlock, "0", oldSignal, false);
             }
         }
-
         undoManager.commitStep();
     }
 
     private void handleKeyboardCursorMove(KeyCode code) {
         ensureKeyboardCursor();
-
         switch (code) {
             case LEFT:  keyboardCursorX--; break;
             case RIGHT: keyboardCursorX++; break;
@@ -573,12 +648,10 @@ public class MainState implements State {
             case DOWN:  keyboardCursorY++; break;
             default: return;
         }
-
         if (keyboardCursorX < 0) keyboardCursorX = 0;
         if (keyboardCursorY < 0) keyboardCursorY = 0;
         if (keyboardCursorX >= world.getSize()) keyboardCursorX = world.getSize() - 1;
         if (keyboardCursorY >= world.getSize()) keyboardCursorY = world.getSize() - 1;
-
         requestRender();
     }
 
@@ -636,9 +709,9 @@ public class MainState implements State {
     private void openTextEditor(int cellX, int cellY) {
         int layer = world.getCurrentLayer();
         String raw = world.getBlockTexts(layer, cellX, cellY);
-
         String currentTrue = "";
         String currentFalse = "";
+
         if (raw != null) {
             int pipe = raw.indexOf('|');
             if (pipe >= 0) {
@@ -672,12 +745,11 @@ public class MainState implements State {
             undoManager.beginStep("edit-text");
             undoManager.recordChange(layer, cellX, cellY, oldBlock, newBlock, oldSignal, newSignal);
             undoManager.commitStep();
-
             requestRender();
+
             System.out.println("Text block updated at (" + cellX + ", " + cellY
                     + "): TRUE=\"" + result.trueText + "\" FALSE=\"" + result.falseText + "\"");
         }
-
         javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
     }
 
@@ -689,7 +761,6 @@ public class MainState implements State {
 
         BlockType type = palette.getSelectedBlock();
         Direction dir = palette.getCurrentDirection();
-
         String blockStr = type.getName();
         if (type.hasDirection()) {
             blockStr += "_f" + dir.getCode();
@@ -731,7 +802,6 @@ public class MainState implements State {
 
     private void onSpeedChange() {
         int speed = palette.getCurrentSpeed();
-
         if (palette.isMaxSpeed()) {
             boolean wasPaused = simulationEngine.isPaused();
             simulationEngine.setUnlimitedSpeed(true);
@@ -748,7 +818,6 @@ public class MainState implements State {
             boolean wasPaused = simulationEngine.isPaused();
             simulationEngine.setUnlimitedSpeed(false);
             simulationEngine.setSpeed(speed);
-
             if (!wasPaused) {
                 if (!simulationEngine.isRunning()) {
                     simulationEngine.start();
@@ -771,13 +840,13 @@ public class MainState implements State {
         double paletteSceneY = palette.localToScene(0, 0).getY();
         double paletteWidth = palette.getWidth();
         double paletteHeight = palette.getHeight();
-
         return (sceneX >= paletteSceneX && sceneX <= paletteSceneX + paletteWidth &&
                 sceneY >= paletteSceneY && sceneY <= paletteSceneY + paletteHeight);
     }
 
     private void placeBlock(double sceneX, double sceneY) {
         if (isMouseOverPalette(sceneX, sceneY)) return;
+
         Point2D canvasCoords = getCanvasCoordinates(sceneX, sceneY);
         double canvasX = canvasCoords.getX();
         double canvasY = canvasCoords.getY();
@@ -791,7 +860,6 @@ public class MainState implements State {
 
         double worldX = camera.screenToWorldX(canvasX);
         double worldY = camera.screenToWorldY(canvasY);
-
         int baseCellSize = SpriteManager.getInstance().getBaseSize();
         int cellX = (int) Math.floor(worldX / baseCellSize);
         int cellY = (int) Math.floor(worldY / baseCellSize);
@@ -857,7 +925,6 @@ public class MainState implements State {
         int active  = simulationEngine.getActiveCellsCount();
         int changes = simulationEngine.getPendingChangesCount();
         int props   = simulationEngine.getLastPropagateCalls();
-
         double lastNs = simulationEngine.getLastTickNs();
         double rbNs   = simulationEngine.getRebuildNs();
         double p1Ns   = simulationEngine.getPhase1Ns();
@@ -877,6 +944,7 @@ public class MainState implements State {
         int avgActive  = simulationEngine.getSnapAvgActive();
         int avgChanges = simulationEngine.getSnapAvgChanges();
         int avgProps   = simulationEngine.getSnapAvgProps();
+
         int maxCells   = simulationEngine.getSnapRebuildCellsMax();
 
         int done  = simulationEngine.getSnapProgressDone();
@@ -886,19 +954,15 @@ public class MainState implements State {
         debugLines[0] = String.format(
                 "profiling: sample every %d ticks | avg window %d samples (%d/%d done)",
                 every, total, done, total);
-
         debugLines[1] = String.format(
                 "dirty %6d   active %6d   changes %5d   props %5d   rebuild cells max %d",
                 avgDirty, avgActive, avgChanges, avgProps, maxCells);
-
         debugLines[2] = String.format(
                 "tick %8.0f ns   min %8.0f ns   max %8.0f ns",
                 avgTick, minTick, maxTick);
-
         debugLines[3] = String.format(
                 "rebuild %8.0f ns   phase1 %8.0f ns   phase2 %8.0f ns",
                 avgRb, avgP1, avgP2);
-
         debugLines[4] = String.format(
                 "propagate %8.0f ns", avgProp);
 
@@ -914,7 +978,6 @@ public class MainState implements State {
         if (debugLines[0] == null) return;
 
         ColorConfig colors = SpriteManager.getInstance().getColors();
-
         Font font = Font.font("Monospaced", FontWeight.BOLD, 13);
         gc.setFont(font);
 
@@ -943,7 +1006,6 @@ public class MainState implements State {
         double diagY = y0 + 10 + textRows * 18 + 6;
         double diagW = debugBoxW - 24;
         double diagH = 26;
-
         drawPhaseDiagram(gc, colors, diagX, diagY, diagW, diagH);
 
         gc.setTextBaseline(javafx.geometry.VPos.BASELINE);
@@ -968,7 +1030,6 @@ public class MainState implements State {
 
         double[] parts = { rb, p1, p2_prop, p2_rest, other };
         String[] labels = { "rebuild", "phase1 (compute)", "propagate", "phase2-rest", "other/overhead" };
-
         Color[] colorsArr = {
                 Color.web(colors.getArrow()),
                 Color.web(colors.getBridge()),
@@ -990,20 +1051,17 @@ public class MainState implements State {
 
         double px = x;
         int drawn = 0;
-
         for (int i = 0; i < parts.length; i++) {
             double frac = parts[i] / total;
             double segW = frac * availW;
-
             if (segW <= 0) continue;
             if (segW < 1.0) segW = 1.0;
 
             gc.setFill(colorsArr[i]);
             gc.fillRect(px, y, segW, h);
-
             px += segW;
-
             drawn++;
+
             if (drawn < visibleCount) {
                 gc.setFill(Color.web(colors.getGrid()));
                 gc.fillRect(px, y, 2.0, h);
@@ -1024,7 +1082,6 @@ public class MainState implements State {
         for (int i = 0; i < parts.length; i++) {
             double frac = parts[i] / total;
             double segW = frac * availW;
-
             if (segW <= 0) continue;
             if (segW < 1.0) segW = 1.0;
 
@@ -1032,7 +1089,6 @@ public class MainState implements State {
                 gc.setFill(Color.web(colors.getBackground()));
                 gc.fillText(String.format("%.0f%%", frac * 100.0), px + segW / 2, y + h / 2);
             }
-
             px += segW;
             drawn++;
             if (drawn < visibleCount) {
@@ -1046,15 +1102,12 @@ public class MainState implements State {
 
         double lx = x;
         double ly = y + h + 8;
-
         for (int i = 0; i < parts.length; i++) {
             double pct = (parts[i] / total) * 100.0;
             gc.setFill(colorsArr[i]);
             gc.fillRect(lx, ly + 2, 10, 10);
-
             gc.setFill(Color.web(colors.getGrid()));
             gc.fillText(String.format("%s: %.1f%%", labels[i], pct), lx + 16, ly);
-
             ly += 16;
         }
     }
@@ -1088,6 +1141,7 @@ public class MainState implements State {
 
                 int[] sprite = SpriteManager.getInstance()
                         .getSpriteWithDirection(blockName, cellScreenSize, dir, false);
+
                 if (sprite != null) {
                     int cellX = mouseCellX + dx;
                     int cellY = mouseCellY + dy;
@@ -1131,7 +1185,6 @@ public class MainState implements State {
                 performSave(currentMapName);
             }
         });
-
         javafx.application.Platform.runLater(() -> renderer.getCanvas().requestFocus());
     }
 
@@ -1159,9 +1212,7 @@ public class MainState implements State {
             System.out.println("Clipboard has data — preview mode enabled");
         }
 
-        if (root.getScene() != null) {
-            installKeyboardFilter(root.getScene());
-        }
+        // УБРАЛИ вызов installKeyboardFilter отсюда, он теперь в конструкторе
 
         palette.updateLayer(world.getCurrentLayer());
         requestRender();
@@ -1171,10 +1222,13 @@ public class MainState implements State {
     @Override
     public void exit() {
         System.out.println("Exiting MainState");
+        cancelScriptCountdown(true);
         simulationEngine.stop();
+
         if (deleteTimer != null) deleteTimer.stop();
         if (camera != null) camera.stop();
         if (selection != null) selection.clear();
+
         previewMode = false;
         keyboardCursorActive = false;
         panning = false;
@@ -1183,6 +1237,9 @@ public class MainState implements State {
         rHeld = false;
         lastPlacedCellX = -1;
         lastPlacedCellY = -1;
+
+        // Сбрасываем флаг, чтобы новый MainState мог установить фильтр
+        filterInstalled = false;
     }
 
     @Override
@@ -1260,9 +1317,11 @@ public class MainState implements State {
 
                 int selW = maxX - minX + 1;
                 int selH = maxY - minY + 1;
+
                 long nowNs = System.nanoTime();
                 boolean sizeChanged = (selW != lastSelectionSoundWidth
                         || selH != lastSelectionSoundHeight);
+
                 if (sizeChanged && nowNs - lastSelectionSoundNanos >= SELECTION_SOUND_MIN_INTERVAL) {
                     lastSelectionSoundWidth = selW;
                     lastSelectionSoundHeight = selH;
@@ -1276,6 +1335,7 @@ public class MainState implements State {
                 double screenY2 = camera.worldToScreenY((maxY + 1) * camera.getBaseCellSize());
 
                 gc.strokeRect(screenX1, screenY1, screenX2 - screenX1, screenY2 - screenY1);
+
             } else if (selection.hasSelection() && !previewMode) {
                 int minX = Math.min(selection.getStartX(), selection.getEndX());
                 int maxX = Math.max(selection.getStartX(), selection.getEndX());
@@ -1313,6 +1373,108 @@ public class MainState implements State {
         if (debugOverlay) {
             drawDebugOverlay(gc);
         }
+
+        if (scriptCountdownActive) {
+            drawScriptCountdown(gc, now);
+        }
+    }
+
+    /** Обратный отсчёт до старта скрипта: компактный, полупрозрачный, внизу по центру. */
+    private void drawScriptCountdown(GraphicsContext gc, long nowNanos) {
+        ColorConfig colors = SpriteManager.getInstance().getColors();
+        double cw = renderer.getCanvas().getWidth();
+        double ch = renderer.getCanvas().getHeight();
+        if (cw <= 0 || ch <= 0) return;
+
+        long remaining = scriptCountdownEndNanos - nowNanos;
+        if (remaining < 0) remaining = 0;
+
+        // Формат: секунды.десятые (например, 2.5)
+        double secs = remaining / 1_000_000_000.0;
+        String text = String.format("%.1f", secs);
+
+        // Размеры плашки (меньше предыдущего варианта)
+        double boxW = Math.max(100, cw * 0.12);
+        double boxH = boxW * 0.45;
+
+        // Позиция: центр по горизонтали, но смещено вниз (80% высоты экрана)
+        double bx = (cw - boxW) / 2.0;
+        double by = ch * 0.80;
+
+        // Фон-плашка (более прозрачный)
+        gc.setFill(Color.web(colors.getBackground(), 0.6));
+        gc.fillRoundRect(bx, by, boxW, boxH, 12, 12);
+
+        // Рамка (тоньше и менее яркая)
+        gc.setStroke(Color.web(colors.getSignalOn(), 0.7));
+        gc.setLineWidth(2);
+        gc.strokeRoundRect(bx, by, boxW, boxH, 12, 12);
+
+        // Цифры
+        Font font = Font.font("Monospaced", FontWeight.BOLD, boxH * 0.6);
+        gc.setFont(font);
+        gc.setTextAlign(javafx.scene.text.TextAlignment.CENTER);
+        gc.setTextBaseline(javafx.geometry.VPos.CENTER);
+        gc.setFill(Color.web(colors.getSignalOn()));
+        gc.fillText(text, cw / 2.0, by + boxH / 2.0);
+    }
+
+    /**
+     * Запуск скрипта с обратным отсчётом.
+     */
+    private void startScriptWithCountdown(String code, int delaySeconds) {
+        // Отменяем предыдущий отсчёт, если он ещё идёт
+        cancelScriptCountdown(false);
+        renderer.getCanvas().requestFocus();
+
+        if (delaySeconds <= 0) {
+            beginKeyboardCursorAtMouse();
+            executeScript(code);
+            return;
+        }
+
+        scriptCountdownActive = true;
+        scriptCountdownCode = code;
+        scriptCountdownEndNanos = System.nanoTime() + delaySeconds * 1_000_000_000L;
+
+        if (countdownTimer == null) {
+            countdownTimer = new AnimationTimer() {
+                @Override
+                public void handle(long now) {
+                    if (!scriptCountdownActive) { stop(); return; }
+
+                    long remaining = scriptCountdownEndNanos - now;
+                    if (remaining <= 0) {
+                        scriptCountdownActive = false;
+                        stop();
+
+                        String c = scriptCountdownCode;
+                        scriptCountdownCode = null;
+
+                        // Курсор клавиатуры — точно под мышь, прямо перед запуском
+                        beginKeyboardCursorAtMouse();
+                        executeScript(c);
+                        return;
+                    }
+                    requestRender(); // перерисовываем кадр с цифрами отсчёта
+                }
+            };
+        }
+        countdownTimer.start();
+        requestRender();
+    }
+
+    /** Прерывает активный обратный отсчёт (и, опционально, выполняющийся скрипт). */
+    private void cancelScriptCountdown(boolean alsoStopScript) {
+        if (countdownTimer != null) countdownTimer.stop();
+        scriptCountdownActive = false;
+        scriptCountdownCode = null;
+
+        if (alsoStopScript && currentInterpreter != null) {
+            currentInterpreter.stop();
+            currentInterpreter = null;
+        }
+        requestRender();
     }
 
     @Override
@@ -1417,6 +1579,11 @@ public class MainState implements State {
         // Остальные клавиши (без модификаторов Ctrl/Shift)
         switch (event.getCode()) {
             case ESCAPE:
+                // ESC отменяет незапущенный обратный отсчёт перед скриптом
+                if (scriptCountdownActive) {
+                    cancelScriptCountdown(false);
+                    return;
+                }
                 nextState = new MenuState();
                 break;
 
@@ -1448,7 +1615,6 @@ public class MainState implements State {
                         selectionStartY = (int) Math.floor(worldY / camera.getBaseCellSize());
                     }
                     selection.startSelection(selectionStartX, selectionStartY, world.getCurrentLayer());
-
                     lastSelectionSoundWidth = -1;
                     lastSelectionSoundHeight = -1;
                     lastSelectionSoundNanos = 0;
@@ -1566,6 +1732,7 @@ public class MainState implements State {
             case DIGIT8: palette.setSelectedIndex(7); break;
             case DIGIT9: palette.setSelectedIndex(8); break;
             case DIGIT0: palette.setSelectedIndex(9); break;
+
             default: break;
         }
     }
@@ -1579,11 +1746,10 @@ public class MainState implements State {
         int layer = world.getCurrentLayer();
 
         undoManager.beginStep("paste");
-
         for (int dy = 0; dy < h; dy++) {
             for (int dx = 0; dx < w; dx++) {
                 int x = px + dx;
-                int y = py + dy;
+                int y = py + dy; // Уже ВНИЗ и ВПРАВО
                 if (!isValidCell(x, y)) continue;
 
                 String nb = clip.get(dy).get(dx);
@@ -1598,7 +1764,6 @@ public class MainState implements State {
                 undoManager.recordChange(layer, x, y, ob, nb, os, ns);
             }
         }
-
         undoManager.commitStep();
     }
 
@@ -1653,6 +1818,7 @@ public class MainState implements State {
 
         String[][] src = new String[h][w];
         boolean[][] srcSignal = new boolean[h][w];
+
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 String b = world.getBlock(layer, minX + x, minY + y);
@@ -1664,11 +1830,13 @@ public class MainState implements State {
         String[][] dst;
         boolean[][] dstSignal;
         int newW, newH;
+
         if (kind == TransformKind.ROTATE_CW || kind == TransformKind.ROTATE_CCW) {
             newW = h; newH = w;
         } else {
             newW = w; newH = h;
         }
+
         dst = new String[newH][newW];
         dstSignal = new boolean[newH][newW];
 
@@ -1706,12 +1874,16 @@ public class MainState implements State {
             for (int x = 0; x < newW; x++) {
                 int wx = minX + x, wy = minY + y;
                 if (!isValidCell(wx, wy)) continue;
+
                 String nb = dst[y][x];
                 if (nb == null || nb.equals("0")) continue;
+
                 String ob = world.getBlock(layer, wx, wy);
                 boolean os = world.getSignal(layer, wx, wy);
+
                 world.setBlock(layer, wx, wy, nb);
                 boolean ns = world.getSignal(layer, wx, wy);
+
                 undoManager.recordChange(layer, wx, wy, ob, nb, os, ns);
             }
         }
@@ -1764,7 +1936,6 @@ public class MainState implements State {
                     case FLIP_V:     nx = x;         ny = h - 1 - y;  break;
                     default:         nx = x;         ny = y;          break;
                 }
-
                 dst[ny][nx] = transformBlockString(b, dirOp);
             }
         }
@@ -1772,6 +1943,7 @@ public class MainState implements State {
         // 2) Записываем обратно в буфер (мутация in-place)
         int newH = dst.length;
         int newW = dst[0].length;
+
         clip.clear();
         for (int y = 0; y < newH; y++) {
             List<String> row = new java.util.ArrayList<>(newW);
@@ -1797,15 +1969,15 @@ public class MainState implements State {
         String name = b.substring(0, us);
         char state = b.charAt(us + 1);
         char dirC = b.charAt(us + 2);
+
         Direction d = Direction.fromChar(dirC);
         Direction nd = dirOp.apply(d);
+
         if (nd == d) return b;
         return name + "_" + state + nd.getCode();
     }
 
     private enum TransformKind { ROTATE_CW, ROTATE_CCW, FLIP_H, FLIP_V }
-
-
 
     private void showEditorContextMenu(double screenX, double screenY) {
         Stage owner = null;
@@ -1838,6 +2010,7 @@ public class MainState implements State {
                 requestRender();
             }));
         }
+
         // ===== РЕЖИМ "ВЫДЕЛЕНО" (буфера нет) =====
         else if (hasSel) {
             items.add(new ContextMenuPopup.Item("COPY", () -> {
@@ -1870,7 +2043,6 @@ public class MainState implements State {
         ContextMenuPopup.show(owner, screenX, screenY, items);
     }
 
-
     private void applyTransform(boolean hasSel, boolean hasClip,
                                 TransformKind kind,
                                 java.util.function.UnaryOperator<Direction> dirOp) {
@@ -1892,7 +2064,6 @@ public class MainState implements State {
     public void handleKeyReleased(KeyEvent event) {
         if (event.getCode() == KeyCode.E && selecting) {
             selecting = false;
-
             int endX, endY;
             if (keyboardCursorActive) {
                 endX = keyboardCursorX;
@@ -1909,8 +2080,8 @@ public class MainState implements State {
             if (canPlaySound()) {
                 AudioManager.getInstance().playSelect();
             }
-
             requestRender();
+
             System.out.println("Selection finished: size "
                     + selection.getWidth() + "x" + selection.getHeight());
         }
@@ -1944,6 +2115,7 @@ public class MainState implements State {
             if (!overPalette && !selecting && !deleteMode) {
                 int[] cell = getCellUnderSceneCoords(event.getSceneX(), event.getSceneY());
                 int layer = world.getCurrentLayer();
+
                 if (isValidCell(cell[0], cell[1]) &&
                         world.blockTypes[world.getIdx(layer, cell[0], cell[1])] == World.TYPE_TEXT) {
                     openTextEditor(cell[0], cell[1]);
@@ -1964,6 +2136,7 @@ public class MainState implements State {
             panning = false;
             renderer.getCanvas().setCursor(javafx.scene.Cursor.DEFAULT);
         }
+
         if (event.getButton() == MouseButton.PRIMARY) {
             lastPlacedCellX = -1;
             lastPlacedCellY = -1;
@@ -2004,7 +2177,6 @@ public class MainState implements State {
         if (selecting) {
             requestRender();
         }
-
         if (previewMode) {
             requestRender();
         }
@@ -2026,6 +2198,8 @@ public class MainState implements State {
         lastSceneMouseY = event.getSceneY();
 
         double deltaY = event.getDeltaY();
+        if (deltaY == 0) return;
+
         double factor = deltaY > 0 ? 1.1 : 0.9;
         camera.zoom(factor, event.getSceneX(), event.getSceneY());
         SpriteManager.getInstance().trimRotatedCache();
